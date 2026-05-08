@@ -61,7 +61,7 @@ if st.button("🚀 Bắt đầu quét đối chiếu", type="primary"):
                 df_dsnv_all = read_excel_values_only(file_dsnv)
                 dict_nv_chuan = {}
                 kw_ma = ['mãnv', 'mnv', 'manv', 'mãsốnv', 'mãnhânviên', 'staffid']
-                kw_ten = ['họvàtên', 'họtên', 'tên', 'fullname']
+                kw_ten = ['họvàtên', 'họtên', 'fullname']
 
                 for s_name, df_s in df_dsnv_all.items():
                     c_ma, c_ten = -1, -1
@@ -95,9 +95,27 @@ if st.button("🚀 Bắt đầu quét đối chiếu", type="primary"):
                         row_raw = [str(x).strip() if x is not None else "" for x in row.values]
                         row_cleaned = [clean_header(x) for x in row_raw]
                         
-                        # Nhận diện thông tin lớp (Dòng tiêu đề to thường ở cột 0)
-                        if row_raw[0] and ("lớp" in row_raw[0].lower() or "khóa" in row_raw[0].lower()):
-                            current_class = row_raw[0].split('\n')[0]
+                        # --- A. NHẬN DIỆN THÔNG TIN LỚP (ƯU TIÊN CỘT A + G, H) ---
+                        cell_0 = row_raw[0] # Cột A
+                        cell_6 = row_raw[6] if len(row_raw) > 6 else "" # Cột G (Bắt đầu)
+                        cell_7 = row_raw[7] if len(row_raw) > 7 else "" # Cột H (Kết thúc)
+                        
+                        # 1. TRƯỜNG HỢP LỚP THÔNG THƯỜNG: Tên lớp (A) và Ngày (G, H) cùng 1 dòng
+                        # Điều kiện: Cột A có chữ dài và Cột G có định dạng ngày (chứa dấu /)
+                        if cell_0 and "/" in str(cell_6):
+                            current_class = f"{cell_0.split(chr(10))[0]} [{cell_6} - {cell_7}]"
+                            pending_class_name = "" # Reset biến tạm vì đã chốt được lớp
+                            
+                        # 2. TRƯỜNG HỢP LỚP PHỤC HỒI: Tên lớp (A) nằm trên, Ngày nằm dưới
+                        elif cell_0 and len(cell_0) > 10 and not any(k in clean_header(cell_0) for k in kw_ma + kw_ten):
+                            # Lưu tạm tên lớp vào hàng chờ
+                            pending_class_name = cell_0.split(chr(10))[0]
+                            
+                        # 3. NHẶT NGÀY CHO LỚP PHỤC HỒI (Dòng Lý thuyết/Thực hành)
+                        if ("lý thuyết" in cell_0.lower() or "thực hành" in cell_0.lower()) and "/" in str(cell_6):
+                            if pending_class_name:
+                                # Lấy ngày ở dòng phụ này đắp vào tên lớp đang chờ
+                                current_class = f"{pending_class_name} [{cell_6} - {cell_7}]"
 
                         tmp_ma = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ma)), -1)
                         tmp_ten = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ten)), -1)
