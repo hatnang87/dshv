@@ -5,10 +5,12 @@ from openpyxl.styles import Font
 import io
 import zipfile
 import re
+import os
+import sqlite3
 from datetime import datetime, timedelta
 
 # ==========================================
-# CẤU HÌNH GIAO DIỆN
+# CẤU HÌNH GIAO DIỆN & KHỞI TẠO CSDL
 # ==========================================
 st.set_page_config(page_title="🛠️ Công cụ Xử lý Dữ liệu Đào tạo VIAGS", layout="wide")
 
@@ -19,6 +21,35 @@ st.markdown("""
     .status-box { padding: 20px; border-radius: 10px; border: 1px solid #dee2e6; background-color: white; }
     </style>
 """, unsafe_allow_html=True)
+
+DB_FILE = "dsnv_local.db"
+
+def get_db_connection():
+    """Tạo kết nối tới SQLite và trả về dạng Row để truy cập bằng tên cột"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    """Khởi tạo cấu trúc bảng CSDL - Chuẩn cấu trúc để đồng bộ Supabase sau này"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS nhan_vien (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ma_nv TEXT,
+            ho_ten TEXT,
+            don_vi_goc TEXT,
+            don_vi_chuan TEXT
+        )
+    """)
+    # Tạo Index cho ma_nv để tăng tốc độ truy vấn tối đa khi danh sách phình to
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ma_nv ON nhan_vien (ma_nv)")
+    conn.commit()
+    conn.close()
+
+# Chạy khởi tạo bảng ngay khi ứng dụng kích hoạt
+init_db()
 
 # ==========================================
 # 📑 HÀM TIỆN ÍCH DÙNG CHUNG
@@ -103,12 +134,9 @@ def parse_date_range(thoi_gian_str):
 def week_labels_from_range(start_date, end_date):
     if not start_date or not end_date:
         return []
-    
-    # Đảm bảo lấy ngày nhỏ nhất làm ngày bắt đầu
     if start_date > end_date:
         start_date, end_date = end_date, start_date
 
-    # --- LOGIC MỚI: CHỈ LẤY TUẦN CỦA NGÀY BẮT ĐẦU ---
     start_week = start_date - timedelta(days=start_date.weekday())
     week_num = start_week.isocalendar()[1]
     week_end = start_week + timedelta(days=6)
@@ -117,8 +145,6 @@ def week_labels_from_range(start_date, end_date):
         label = f"Tuần {week_num} ({start_week.day:02d}-{week_end.day:02d}/{start_week.month})"
     else:
         label = f"Tuần {week_num} ({start_week.day:02d}/{start_week.month}-{week_end.day:02d}/{week_end.month})"
-        
-    # Trả về mảng chỉ chứa 1 tuần duy nhất
     return [label]
 
 def clean_header(val):
@@ -142,46 +168,46 @@ def read_excel_values_only(uploaded_file):
             res[sheet_name] = pd.DataFrame(data)
         return res
 
+def chuan_hoa_don_vi(dv_str):
+    if not dv_str or str(dv_str).lower() == 'nan': return ""
+    dv_clean = re.sub(r'[\s\.\-\_]', '', str(dv_str).lower())
+    dv_no_accent = remove_vietnamese_accents(dv_clean).lower() 
+    
+    mapping = {
+        "hanhkhach": "PVHK", "pvhk": "PVHK", "hk": "PVHK",
+        "hanghoa": "PVHH", "pvhh": "PVHH", "hh": "PVHH",
+        "dieuhanh": "TTĐH", "ttdh": "TTĐH", "dh": "TTĐH", "đh": "TTĐH",
+        "sando": "PVSĐ", "pvsd": "PVSĐ", "sd": "PVSĐ", "sđ": "PVSĐ",
+        "hanhchinh": "KHHC", "khhc": "KHHC", "hc": "KHHC",
+        "trung tâm huấn luyện": "VNBA", "Trung tâm Huấn luyện": "VNBA", "trungtamhuanluyen": "VNBA", "vnba": "VNBA",
+        "ketoan": "KTOA", "ktoa": "KTOA", "kt": "KTOA",
+        "chatluong": "QLCL", "qlcl": "QLCL", "cl": "QLCL"
+    }
+    for key, val in mapping.items():
+        if key in dv_no_accent:
+            return val
+    return str(dv_str).strip().upper()
+
 # ==========================================
 # CORE LOGIC BÓC TÁCH KHĐT & TRỘN HỌC VIÊN
 # ==========================================
 def doc_khdt_gom_theo_tuan(file_khdt):
-    """BƯỚC 1: Đọc KHĐT và xuất ra list các lớp theo tuần (Chỉ tạo khung)"""
     file_khdt.seek(0)
     wb_khdt = pd.ExcelFile(file_khdt)
     
-    # ==========================================
-    # ==========================================
-    # 1. KHAI BÁO DANH SÁCH GIÁO VIÊN TTĐT MB
-    # ==========================================
     GV_TTDT_MB = [
-        "Ngô Bích Hằng",
-        "Nguyễn Thị Phương Hiền",
-        "Nguyễn Đăng Các",
-        "Trần Tuấn Anh",
-        "Đỗ Trí Thức",
-        "Nguyễn Thu Hằng",
-        "Ngô Trung Thành",
-        "Nguyễn Hải Hà",
-        "Vũ Hoàng Giang",
-        "Đặng Khánh Ly",
-        "Đỗ Thị Mỹ Bình",
-        "Nguyễn Đức Nghĩa",
-        "Nguyễn Thị Lan"
+        "Ngô Bích Hằng", "Nguyễn Thị Phương Hiền", "Nguyễn Đăng Các", "Trần Tuấn Anh",
+        "Đỗ Trí Thức", "Nguyễn Thu Hằng", "Ngô Trung Thành", "Nguyễn Hải Hà",
+        "Vũ Hoàng Giang", "Đặng Khánh Ly", "Đỗ Thị Mỹ Bình", "Nguyễn Đức Nghĩa", "Nguyễn Thị Lan"
     ]
     
-    # ==========================================
-    # 2. XÁC ĐỊNH CÁC SHEET CẦN ĐỌC (VNBA & VNA)
-    # ==========================================
     sheet_vnba = next((n for n in wb_khdt.sheet_names if "vnba" in n.lower() or "nba" in n.lower()), None)
-    # Tìm sheet VNA (đảm bảo không bị trùng tên với VNBA)
     sheet_vna = next((n for n in wb_khdt.sheet_names if "vna" in n.lower() and "vnba" not in n.lower()), None)
     
     target_sheets = []
     if sheet_vnba: target_sheets.append(("VNBA", sheet_vnba))
     if sheet_vna: target_sheets.append(("VNA", sheet_vna))
     
-    # Dự phòng nếu file bị đổi tên sheet khác lạ
     if not target_sheets:
         valid_sheets = [n for n in wb_khdt.sheet_names if "đào tạo" in n.lower()]
         sheet_fallback = valid_sheets[0] if valid_sheets else wb_khdt.sheet_names[0]
@@ -189,53 +215,43 @@ def doc_khdt_gom_theo_tuan(file_khdt):
         
     def is_roman(s): return bool(re.match(r'^(I{1,3}|IV|V|VI{1,3}|IX|X)$', str(s).strip(), re.IGNORECASE))
         
-    classes, current_roman_course, current_category, current_class = [], "", "", None
+    classes, current_class = [], None
     dict_theo_tuan = {}
     
-    # ==========================================
-    # 3. ĐỌC VÀ GỘP DỮ LIỆU CÁC SHEET VÀO 1 BẢNG
-    # ==========================================
     df_list = []
     for sheet_type, sheet_name in target_sheets:
         df_raw = pd.read_excel(wb_khdt, sheet_name=sheet_name, header=None)
         header_row_idx = next((idx for idx, row in df_raw.iterrows() if any("khóa đào tạo" in str(s).lower() or "khoa dao tao" in str(s).lower() for s in row.values)), 4)
         
         df_data = pd.read_excel(wb_khdt, sheet_name=sheet_name, skiprows=header_row_idx)
-        df_data["_SheetType"] = sheet_type # Gắn mác nguồn gốc của dòng này
+        df_data["_SheetType"] = sheet_type
         df_list.append(df_data)
         
-    # Nối tất cả các sheet lại thành 1 dataframe duy nhất
     df_khdt_data = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
-    
     # ==========================================
-    # 4. BẮT ĐẦU VÒNG LẶP QUÉT DỮ LIỆU
+    # BẮT ĐẦU VÒNG LẶP QUÉT DỮ LIỆU
     # ==========================================
     current_roman_course = ""
     current_latin_course = "" 
     current_section_type = "OTHER"
-    current_sheet_tracking = "" # [THÊM MỚI] Biến để chống "trôi" trạng thái giữa các sheet
-    
+    current_sheet_tracking = ""
+    current_category = ""
+
     for _, row in df_khdt_data.iterrows():
         if len(row) < 12: continue
-        
         sheet_type = row.get("_SheetType", "VNBA")
         
-        # [QUAN TRỌNG 1] Reset sạch bộ nhớ khi bước sang Sheet mới
         if sheet_type != current_sheet_tracking:
             current_sheet_tracking = sheet_type
             current_roman_course = ""
             current_latin_course = ""
             current_section_type = "OTHER"
+            current_category = ""
             
         stt, ten = str(row.iloc[0]).strip(), str(row.iloc[1]).strip()
-        
-        # Gọt đuôi ".0" do Pandas tự ép kiểu số thập phân
-        if stt.endswith('.0'):
-            stt = stt[:-2]
+        if stt.endswith('.0'): stt = stt[:-2]
             
         ten_lower_check = ten.lower()
-        
-        # [QUAN TRỌNG 2] Nhận diện Tiêu đề thông minh (Bao gồm số La Mã HOẶC dạng A.1.1, B.2...)
         is_header_stt = is_roman(stt) or bool(re.match(r'^[A-Z](\.\d+)+$', stt))
         
         if is_header_stt:
@@ -251,12 +267,10 @@ def doc_khdt_gom_theo_tuan(file_khdt):
             else:
                 current_section_type = "OTHER"
                 current_roman_course = ten
-            continue  # Đã là Tiêu đề thì bỏ qua, không tạo lớp
+            continue
             
-        # Cập nhật Khóa học cha La tinh (dòng chứa số nguyên: 1, 2, 3...)
         is_latin = bool(re.match(r'^\d+$', stt))
-        if is_latin:
-            current_latin_course = ten
+        if is_latin: current_latin_course = ten
             
         loai_hinh, el_val = str(row.iloc[2]).strip(), str(row.iloc[5]).strip()
         tu_ngay, den_ngay = str(row.iloc[8]).strip(), str(row.iloc[9]).strip()
@@ -264,44 +278,28 @@ def doc_khdt_gom_theo_tuan(file_khdt):
         
         if pd.isna(row.iloc[1]) or ten == "" or ten == "nan" or "tổng cộng" in ten_lower_check: continue
         
-        # --- BỘ LỌC VÀ CHUẨN HÓA TÊN RIÊNG CHO SHEET VNA ---
         if sheet_type == "VNA":
-            # 1. Lọc theo danh sách Giáo viên
             if gv and gv != "nan":
                 is_ttdt_mb = any(gv_muc_tieu.lower() in gv.lower() for gv_muc_tieu in GV_TTDT_MB)
-                if not is_ttdt_mb:
-                    continue  
+                if not is_ttdt_mb: continue  
             else:
                 continue 
 
-            # 2. Xử lý đổi tên lớp theo Quy tắc phân loại
             ten_lower = ten.lower()
-            
             if current_section_type == "NGHIEP_VU":
-                # Quy tắc 1
                 ten = f"{ten}/{current_roman_course}"
-                
             elif current_section_type == "KIEN_THUC":
-                # Quy tắc 2
                 pass 
-                
             else:
-                # Quy tắc 3: CHUYEN_MON hoặc OTHER dự phòng
-                if is_latin:
-                    pass
+                if is_latin: pass
                 else:
-                    # [QUAN TRỌNG 3] Nới lỏng nhận diện Lý thuyết / Thực hành
                     is_ly_thuyet = "lý thuyết" in ten_lower and "kiểm tra" in ten_lower
                     is_thuc_hanh = "nhóm" in ten_lower or stt == "-" or stt == "" or stt == "nan"
-                    
                     parent_course = current_latin_course if current_latin_course else current_roman_course
                     
-                    if is_ly_thuyet:
-                        ten = f"Lý thuyết + kiểm tra/{parent_course}"
-                    elif is_thuc_hanh:
-                        ten = f"Thực hành + kiểm tra/{parent_course}"
-                    else:
-                        ten = f"{ten}/{parent_course}"
+                    if is_ly_thuyet: ten = f"Lý thuyết + kiểm tra/{parent_course}"
+                    elif is_thuc_hanh: ten = f"Thực hành + kiểm tra/{parent_course}"
+                    else: ten = f"{ten}/{parent_course}"
             
         ten_lower = ten.lower()
         if not stt.isdigit() and not is_roman(stt):
@@ -331,11 +329,8 @@ def doc_khdt_gom_theo_tuan(file_khdt):
                 
         elif current_class is not None:
             row_text_lower = (stt + " " + ten).lower()
-            
-            # --- CODE MỚI THÊM VÀO ĐÂY: Quét bù cột EL ở dòng phụ ---
             if el_val and el_val != "nan" and el_val.strip() != "":
                 current_class["hinh_thuc"] = "Elearning + Trực tiếp"
-            # --------------------------------------------------------
             
             if "nhóm" in row_text_lower:
                 if tu_ngay != 'nan' and den_ngay != 'nan': current_class["nhom_dates"].append((tu_ngay, den_ngay))
@@ -388,14 +383,12 @@ def doc_khdt_gom_theo_tuan(file_khdt):
         }
 
         for label in week_labels:
-            if label not in dict_theo_tuan:
-                dict_theo_tuan[label] = []
+            if label not in dict_theo_tuan: dict_theo_tuan[label] = []
             dict_theo_tuan[label].append(lop_info)
         
     return dict_theo_tuan
 
-def tao_file_excel_mot_tuan(tuan_name, dslop):
-    """Tạo Form Excel Template rỗng"""
+
     wb = openpyxl.Workbook()
     ws_index = wb.active
     ws_index.title = "MucLuc"
@@ -440,7 +433,6 @@ def tao_file_excel_mot_tuan(tuan_name, dslop):
         ws['B9'] = f"- Thời gian:"
         ws['B10'] = f"- Địa điểm:"
         ws['B11'] = f"- Giáo viên:"
-        ws['L11'] = "" 
         
         headers = ["STT", "Mã NV", "Họ tên", "Đơn vị", "Ghi chú"]
         for c_idx, h in enumerate(headers, start=1):
@@ -452,6 +444,113 @@ def tao_file_excel_mot_tuan(tuan_name, dslop):
         
         for r_idx in range(14, 29):
             ws.cell(row=r_idx, column=1, value=r_idx-13)
+            
+    excel_buffer = io.BytesIO()
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        if "mục lục" not in sheet_name.lower():
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is not None:
+                        is_bold = cell.font.bold if cell.font else False
+                        cell.font = Font(name='Times New Roman', size=12, bold=is_bold)
+            ws.column_dimensions['B'].width = 30
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    return excel_buffer
+def tao_file_excel_mot_tuan(tuan_name, dslop):
+    wb = openpyxl.Workbook()
+    ws_index = wb.active
+    ws_index.title = "MucLuc"
+    
+    # Thiết lập độ rộng cột cho sheet Mục Lục rộng rãi để chứa trọn vẹn tên lớp dài
+    ws_index.column_dimensions['A'].width = 8
+    ws_index.column_dimensions['B'].width = 65  # TĂNG LÊN THEO YÊU CẦU CỦA BẠN
+    ws_index.column_dimensions['C'].width = 25
+    ws_index.column_dimensions['D'].width = 20
+    ws_index.column_dimensions['E'].width = 25
+    ws_index.column_dimensions['F'].width = 20
+    
+    headers = ["STT", "TÊN LỚP (BẤM VÀO ĐỂ TỚI SHEET)", "LOẠI HÌNH/HÌNH THỨC", "THỜI GIAN", "ĐỊA ĐIỂM", "GIÁO VIÊN"]
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws_index.cell(row=1, column=col_idx, value=header)
+        cell.font = Font(name='Times New Roman', size=12, bold=True)
+    
+    for idx, lop in enumerate(dslop):
+        row_idx = idx + 2
+        ws_index[f'A{row_idx}'] = idx + 1
+        
+        # [BẢO VỆ FILE] Loại bỏ hoàn toàn ký tự đặc biệt và dấu nháy để tránh vỡ cấu trúc hyperlink Excel
+        safe_name = re.sub(r"[\\/*?:\[\]'\"]", "", lop["ten_lop"])[:30].strip()
+        if not safe_name: 
+            safe_name = f"Lop_Hoc"
+        while safe_name in wb.sheetnames: 
+            safe_name = safe_name[:25] + f"_{idx}"
+            
+        ws = wb.create_sheet(title=safe_name)
+        
+        # Tạo nút quay lại mục lục tại ô A1 của sheet lớp học
+        ws['A1'] = "⬅️ Trở về Mục lục"
+        ws['A1'].hyperlink = "#'MucLuc'!A1"
+        ws['A1'].font = Font(name='Times New Roman', size=12, color="0563C1", underline="single", bold=True)
+        
+        # Ghi thông tin vào sheet Mục lục và tạo đường link trỏ sang sheet lớp
+        link_cell = ws_index[f'B{row_idx}']
+        link_cell.value = lop["ten_lop"]
+        link_cell.hyperlink = f"#'{safe_name}'!A1"
+        link_cell.font = Font(name='Times New Roman', size=12, color="0563C1", underline="single")
+        
+        ws_index[f'C{row_idx}'] = f"{lop['loai_hinh']}/{lop['hinh_thuc']}"
+        ws_index[f'D{row_idx}'] = lop["thoi_gian"]
+        ws_index[f'E{row_idx}'] = lop["dia_diem"]
+        ws_index[f'F{row_idx}'] = lop["giao_vien"]
+        
+        # Điền form thông tin khung lớp học
+        ws['D7'], ws['D9'], ws['D10'], ws['D11'] = lop["ten_lop"], lop["thoi_gian"], lop["dia_diem"], lop["giao_vien"]
+        ws['B7'] = f"- Môn học/Khóa học:"
+        ws['B8'] = f"- Loại hình/hình thức đào tạo: {lop['loai_hinh']}/{lop['hinh_thuc']}"
+        ws['B9'] = f"- Thời gian:"
+        ws['B10'] = f"- Địa điểm:"
+        ws['B11'] = f"- Giáo viên:"
+        
+        class_headers = ["STT", "Mã NV", "Họ tên", "Đơn vị", "Ghi chú"]
+        for c_idx, h in enumerate(class_headers, start=1):
+            ws.cell(row=13, column=c_idx, value=h).font = Font(name='Times New Roman', size=12, bold=True)
+            
+        for r_idx in range(14, 29):
+            ws.cell(row=r_idx, column=1, value=r_idx-13)
+            
+    # ==========================================
+    # QUÉT CHUẨN HÓA TOÀN BỘ FILE (FIX LỖI FILE & CĂN LỀ)
+    # ==========================================
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        
+        # Xử lý riêng cho sheet Mục Lục chính xác bằng so sánh chính xác tên viết liền
+        if sheet_name.lower() == "mucluc":
+            ws.column_dimensions['B'].width = 65  # Giữ cột B rộng rãi
+            for row in ws.iter_rows(min_row=1):
+                for cell in row:
+                    if cell.value is not None:
+                        # [QUAN TRỌNG] Né cột B ra để không làm mất màu xanh dương/gạch chân đặc trưng của link
+                        if cell.column != 2:
+                            is_bold = cell.font.bold if cell.font else False
+                            cell.font = Font(name='Times New Roman', size=12, bold=is_bold)
+        else:
+            # Xử lý cho tất cả các sheet lớp học
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is not None:
+                        if cell.coordinate != 'A1': # Giữ màu xanh cho nút quay lại ở ô A1
+                            is_bold = cell.font.bold if cell.font else False
+                            cell.font = Font(name='Times New Roman', size=12, bold=is_bold)
+            
+            # CĂN CHỈNH GIẢM ĐỘ RỘNG CÁC CỘT THEO YÊU CẦU (Rất gọn gàng khi in)
+            ws.column_dimensions['A'].width = 6   # Cột STT
+            ws.column_dimensions['B'].width = 14  # GIẢM XUỐNG THEO YÊU CẦU (Cột Mã NV)
+            ws.column_dimensions['C'].width = 28  # Cột Họ tên
+            ws.column_dimensions['D'].width = 14  # Cột Đơn vị
+            ws.column_dimensions['E'].width = 15  # Cột Ghi chú
             
     excel_buffer = io.BytesIO()
     wb.save(excel_buffer)
@@ -477,15 +576,10 @@ def doc_dshv_ra_list(file_dshv):
         s_name_clean = remove_vietnamese_accents(sheetname).lower()
         if s_name_clean in ["mucluc", "sheet1"]: continue
         
-        # --- LOGIC XÁC ĐỊNH LOẠI HÌNH TỪ TÊN SHEET ---
-        if any(k in s_name_clean for k in ['ban dau', 'bandau', 'bsn', 'bsnd']):
-            loai_hinh_sheet = 'Ban đầu'
-        elif 'dinh ky' in s_name_clean or 'dinhky' in s_name_clean:
-            loai_hinh_sheet = 'Định kỳ'
-        elif 'phuc hoi' in s_name_clean or 'phuchoi' in s_name_clean:
-            loai_hinh_sheet = 'Phục hồi'
-        else:
-            loai_hinh_sheet = 'Bồi dưỡng kiến thức' 
+        if any(k in s_name_clean for k in ['ban dau', 'bandau', 'bsn', 'bsnd']): loai_hinh_sheet = 'Ban đầu'
+        elif 'dinh ky' in s_name_clean or 'dinhky' in s_name_clean: loai_hinh_sheet = 'Định kỳ'
+        elif 'phuc hoi' in s_name_clean or 'phuchoi' in s_name_clean: loai_hinh_sheet = 'Phục hồi'
+        else: loai_hinh_sheet = 'Bồi dưỡng kiến thức' 
             
         df_sheet = pd.read_excel(wb_dshv, sheet_name=sheetname, header=None)
         header_row_hv = next((idx for idx, row in df_sheet.iterrows() if any("khóa học" in str(s).lower() or "khoa hoc" in str(s).lower() for s in row.values)), None)
@@ -500,7 +594,6 @@ def doc_dshv_ra_list(file_dshv):
                 tu_ngay_hv = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
                 den_ngay_hv = str(row.iloc[7]).strip() if pd.notna(row.iloc[7]) else ""
                 
-                # Sạch lỗi nan thành string rỗng
                 if tu_ngay_hv == "nan": tu_ngay_hv = ""
                 if den_ngay_hv == "nan": den_ngay_hv = ""
                 
@@ -520,19 +613,16 @@ def doc_dshv_ra_list(file_dshv):
                         "hoten": ho_ten, 
                         "donvi": don_vi if don_vi != "nan" else ""
                     })
-                    
     return ds_lop_hv
 
 def nhoi_hoc_vien_vao_template(file_template, ds_lop_hv):
-    # Hàm chuẩn hóa tên siêu sạch (Loại bỏ ký tự lạ, dồn khoảng trắng, chốt đuôi chống nhầm Lớp 1 vs Lớp 10)
     def norm_name(s):
         s = remove_vietnamese_accents(str(s)).lower()
         s = re.sub(r'[^a-z0-9]', ' ', s)
         return " ".join(s.split()) + " "
 
-    # Hàm bóc tách đúng "Ngày" để so khớp (VD: C09/6 -> Lấy số 9)
     def get_days(d_str):
-        s = re.sub(r'/[0-9]{1,2}', '', str(d_str)) # Cắt bỏ phần tháng (/6)
+        s = re.sub(r'/[0-9]{1,2}', '', str(d_str))
         nums = re.findall(r'\d+', s)
         return set([str(int(n)) for n in nums if int(n) <= 31])
 
@@ -553,7 +643,7 @@ def nhoi_hoc_vien_vao_template(file_template, ds_lop_hv):
             
         key_kh_ten = norm_name(ten_lop_kh)
         kh_days = get_days(tg_kh)
-        key_kh_loai = norm_name(loai_hinh_kh)[:6] # Cắt 6 ký tự để so (VD: 'bandau', 'dinhky')
+        key_kh_loai = norm_name(loai_hinh_kh)[:6]
         
         matched_hv = []
         for hv_class in ds_lop_hv:
@@ -561,21 +651,17 @@ def nhoi_hoc_vien_vao_template(file_template, ds_lop_hv):
             hv_days = get_days(hv_class["thoi_gian"])
             key_hv_loai = norm_name(hv_class["loai_hinh"])[:6]
             
-            # --- SUPER MATCH LOGIC ---
             name_match = (key_kh_ten in key_hv_ten) or (key_hv_ten in key_kh_ten)
             type_match = (key_kh_loai == key_hv_loai)
             date_match = len(kh_days.intersection(hv_days)) > 0
             
-            # Nếu Khớp Tên và Loại hình. Thời gian có thể khớp hoặc tên phải giống hệt nhau (đề phòng đổi lịch học)
             if name_match and type_match and (date_match or key_kh_ten == key_hv_ten):
                 matched_hv = hv_class["hoc_vien"]
                 break
                 
         if matched_hv:
-            # Dọn dẹp hàng cũ để dán dữ liệu mới
             for r in range(14, max(14 + len(matched_hv), 30)):
                 for c in range(1, 6): ws.cell(row=r, column=c).value = ""
-            
             for i, hv in enumerate(matched_hv):
                 r_idx = 14 + i
                 ws.cell(row=r_idx, column=1, value=i+1)
@@ -587,106 +673,44 @@ def nhoi_hoc_vien_vao_template(file_template, ds_lop_hv):
     wb.save(out_buffer)
     out_buffer.seek(0)
     return out_buffer
+
 # ==========================================
 # GIAO DIỆN CHÍNH (STREAMLIT TABS)
 # ==========================================
 st.title("🚀 Hệ thống Trộn & Đối chiếu Dữ liệu Đào tạo VIAGS")
 
-# Chia ứng dụng thành 3 tính năng riêng biệt sạch sẽ
-tab_doi_chieu, tab_tao_khung, tab_nhoi_hv = st.tabs([
+tab_doi_chieu, tab_tao_khung, tab_nhoi_hv, tab_ql_csdl = st.tabs([
     "🔍 1. ĐỐI CHIẾU DANH SÁCH HỌC VIÊN", 
     "📄 2. TẠO KHUNG TỪ KHĐT", 
-    "🧑‍🎓 3. TỰ ĐỘNG THÊM HỌC VIÊN"
+    "🧑‍🎓 3. TỰ ĐỘNG THÊM HỌC VIÊN",
+    "🗄️ 4. QUẢN LÝ CƠ SỞ DỮ LIỆU"
 ])
 
-# --- TAB 1: ĐỐI CHIẾU DANH SÁCH (CẬP NHẬT HIỂN THỊ VIẾT TẮT CHUẨN & SỬA LỖI SO KHỚP) ---
+# --- TAB 1: ĐỐI CHIẾU DANH SÁCH (TRUY VẤN REAL-TIME TỪ SQLITE) ---
 with tab_doi_chieu:
-    st.info("💡 Hướng dẫn: Radar tự động quét cột 'Phòng/Phòng ban' ở file DSNV và cột có chứa 'Trung tâm' (loại trừ cột 'Đội') ở file DSHV. Kết quả sẽ hiển thị mã viết tắt (PVHK, PVSĐ...).")
-    
-    col_file1, col_file2 = st.columns(2)
-    with col_file1:
-        file_dsnv = st.file_uploader("1. File Danh sách nhân viên gốc (DSNV)", type=["xlsx", "xls", "csv"])
-    with col_file2:
-        file_dshv = st.file_uploader("2. File Danh sách học viên cần kiểm tra", type=["xlsx", "xls", "csv"])
-
-    def chuan_hoa_don_vi(dv_str):
-        if not dv_str or str(dv_str).lower() == 'nan': return ""
-        # Xóa sạch khoảng trắng, dấu câu để ép chuẩn tuyệt đối
-        dv_clean = re.sub(r'[\s\.\-\_]', '', str(dv_str).lower())
-        # Hàm remove_vietnamese_accents đã có sẵn ở đầu file app.py của bạn
-        dv_no_accent = remove_vietnamese_accents(dv_clean).lower() 
-        
-        mapping = {
-            "hanhkhach": "PVHK", "pvhk": "PVHK", "hk": "PVHK",
-            "hanghoa": "PVHH", "pvhh": "PVHH", "hh": "PVHH",
-            "dieuhanh": "TTĐH", "ttdh": "TTĐH", "dh": "TTĐH", "đh": "TTĐH",
-            "sando": "PVSĐ", "pvsd": "PVSĐ", "sd": "PVSĐ", "sđ": "PVSĐ",
-            "hanhchinh": "KHHC", "khhc": "KHHC", "hc": "KHHC",
-            "ketoan": "KTOA", "ktoa": "KTOA", "kt": "KTOA",
-            "chatluong": "QLCL", "qlcl": "QLCL", "cl": "QLCL"
-        }
-        
-        for key, val in mapping.items():
-            if key in dv_no_accent:
-                return val
-                
-        # Nếu không thuộc mapping nào, trả về chuỗi viết hoa
-        return str(dv_str).strip().upper()
+    st.info("💡 Hướng dẫn: Tải lên file Học viên cần rà soát. Hệ thống tự động quét tìm chéo với Cơ sở dữ liệu nội bộ.")
+    file_dshv = st.file_uploader("Chọn file Danh sách học viên cần kiểm tra", type=["xlsx", "xls", "csv"])
 
     if st.button("🚀 Bắt đầu quét đối chiếu", type="primary"):
-        if not file_dsnv or not file_dshv:
-            st.warning("⚠️ Vui lòng tải lên đầy đủ cả 2 file!")
+        if not file_dshv:
+            st.warning("⚠️ Vui lòng tải lên File Danh sách học viên cần kiểm tra!")
         else:
-            with st.spinner("Đang quét dữ liệu..."):
+            with st.spinner("Đang truy vấn Cơ sở dữ liệu và phân tích dữ liệu..."):
                 try:
-                    # ==========================================
-                    # 1. XỬ LÝ FILE GỐC (DSNV CHUẨN)
-                    # ==========================================
-                    df_dsnv_all = read_excel_values_only(file_dsnv)
-                    dict_nv_chuan = {}
-                    kw_ma = ['mãnv', 'mnv', 'manv', 'mãsốnv', 'mãnhânviên', 'staffid']
-                    kw_ten = ['họvàtên', 'họtên', 'fullname']
-                    kw_dv = ['phòngban', 'phòng', 'phongban', 'phong'] 
+                    # Kiểm tra CSDL có dữ liệu không trước khi chạy
+                    conn = get_db_connection()
+                    count_nv = conn.execute("SELECT COUNT(*) FROM nhan_vien").fetchone()[0]
+                    if count_nv == 0:
+                        st.error("⚠️ Cơ sở dữ liệu hiện đang TRỐNG! Vui lòng qua Tab 4 nạp file DSNV master trước.")
+                        conn.close()
+                        st.stop()
 
-                    for s_name, df_s in df_dsnv_all.items():
-                        c_ma, c_ten, c_dv = -1, -1, -1
-                        for idx, row in df_s.iterrows():
-                            row_raw = [str(x).strip() if x is not None else "" for x in row.values]
-                            row_cleaned = [clean_header(x) for x in row_raw]
-                            
-                            tmp_ma = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ma)), -1)
-                            tmp_ten = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ten)), -1)
-                            tmp_dv = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_dv)), -1)
-                            
-                            if tmp_ma != -1 and tmp_ten != -1:
-                                c_ma, c_ten = tmp_ma, tmp_ten
-                                if tmp_dv != -1: c_dv = tmp_dv
-                                continue
-                                
-                            if c_ma != -1 and c_ten != -1:
-                                m_val = row_raw[c_ma].replace('.0', '').strip()
-                                t_val = row_raw[c_ten].strip()
-                                dv_val_raw = row_raw[c_dv] if c_dv != -1 else ""
-                                dv_chuan_hoa = chuan_hoa_don_vi(dv_val_raw)
-                                
-                                if m_val and m_val.lower() not in ['none', 'nan', '']:
-                                    if m_val not in dict_nv_chuan: 
-                                        dict_nv_chuan[m_val] = {
-                                            "ten": t_val,
-                                            "don_vi_goc": dv_val_raw,
-                                            "don_vi_chuan": dv_chuan_hoa
-                                        }
-                                    # CHỐNG GHI ĐÈ: Nếu NV xuất hiện lần nữa nhưng không có đơn vị, giữ nguyên đơn vị cũ
-                                    elif dict_nv_chuan[m_val]["don_vi_chuan"] == "" and dv_chuan_hoa != "":
-                                        dict_nv_chuan[m_val]["don_vi_goc"] = dv_val_raw
-                                        dict_nv_chuan[m_val]["don_vi_chuan"] = dv_chuan_hoa
-
-                    # ==========================================
-                    # 2. XỬ LÝ FILE HỌC VIÊN (CẦN KIỂM TRA)
-                    # ==========================================
                     results = []
                     total_checked = 0
                     dict_hv_sheets = read_excel_values_only(file_dshv)
+                    
+                    kw_ma = ['mãnv', 'mnv', 'manv', 'mãsốnv', 'mãnhânviên', 'staffid']
+                    kw_ten = ['họvàtên', 'họtên', 'fullname']
                     
                     for sheet_name, df_sheet in dict_hv_sheets.items():
                         c_ma, c_ten, c_dv = -1, -1, -1
@@ -713,8 +737,6 @@ with tab_doi_chieu:
 
                             tmp_ma = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ma)), -1)
                             tmp_ten = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ten)), -1)
-                            
-                            # CHỈ QUÉT cột chứa "Trung tâm", TỪ CHỐI cột "Đội", KHÔNG tìm từ khóa "Đơn vị" nữa
                             tmp_dv = next((i for i, v in enumerate(row_cleaned) if ('trungtâm' in v or 'trungtam' in v) and 'đội' not in v and 'doi' not in v), -1)
                             
                             if tmp_ma != -1 and tmp_ten != -1:
@@ -728,29 +750,48 @@ with tab_doi_chieu:
                                     ho_ten = row_raw[c_ten]
                                     total_checked += 1
                                     
-                                    # Lấy dữ liệu tại cột Trung tâm tìm được, NẾU KHÔNG CÓ THÌ ÉP CỨNG LẤY CỘT F (Index 5)
                                     dv_hv_raw = row_raw[c_dv] if c_dv != -1 else (row_raw[5] if len(row_raw) > 5 else "")
                                     dv_hv_chuan = chuan_hoa_don_vi(dv_hv_raw)
                                     
-                                    if ma_nv in dict_nv_chuan:
-                                        tt_chuan = dict_nv_chuan[ma_nv]
-                                        ten_chuan = tt_chuan["ten"]
-                                        dv_chuan = tt_chuan["don_vi_chuan"]
+                                    # --- TRUY VẤN REAL-TIME TỪ SQLITE ---
+                                    # Lấy toàn bộ danh sách nhân viên khớp mã này (giải quyết triệt để trùng mã đa nhánh)
+                                    cursor = conn.cursor()
+                                    cursor.execute("SELECT ho_ten, don_vi_chuan FROM nhan_vien WHERE ma_nv = ?", (ma_nv,))
+                                    candidates = cursor.fetchall()
+                                    
+                                    if candidates:
+                                        best_match = None
+                                        loi_msg_best = ["Sai họ tên", "Sai đơn vị"]
                                         
-                                        sai_ten = " ".join(ho_ten.lower().split()) != " ".join(ten_chuan.lower().split())
-                                        sai_dv = (dv_chuan != "") and (dv_hv_chuan != dv_chuan)
-                                        
-                                        loi_msg = []
-                                        if sai_ten: loi_msg.append("Sai họ tên")
-                                        if sai_dv: loi_msg.append("Sai đơn vị")
-                                        
-                                        if loi_msg:
+                                        for row_nv in candidates:
+                                            ten_chuan = row_nv["ho_ten"]
+                                            dv_chuan = row_nv["don_vi_chuan"]
+                                            
+                                            sai_ten = " ".join(ho_ten.lower().split()) != " ".join(ten_chuan.lower().split())
+                                            sai_dv = (dv_chuan != "") and (dv_hv_chuan != dv_chuan)
+                                            
+                                            if not sai_ten and not sai_dv:
+                                                loi_msg_best = []
+                                                best_match = row_nv
+                                                break
+                                                
+                                            current_loi = []
+                                            if sai_ten: current_loi.append("Sai họ tên")
+                                            if sai_dv: current_loi.append("Sai đơn vị")
+                                            
+                                            if len(current_loi) < len(loi_msg_best):
+                                                loi_msg_best = current_loi
+                                                best_match = row_nv
+                                                
+                                        if loi_msg_best:
+                                            if best_match is None: best_match = candidates[0]
                                             results.append({
                                                 "Lớp/Khóa": current_class, "Trang": sheet_name, "Mã NV": ma_nv,
-                                                "Tên (File)": ho_ten, "Tên đúng": ten_chuan if sai_ten else "-",
-                                                "Đơn vị (File)": dv_hv_chuan if sai_dv else "-",
-                                                "Đơn vị đúng": dv_chuan if sai_dv else "-",
-                                                "Lỗi": " & ".join(loi_msg)
+                                                "Tên (File)": ho_ten, 
+                                                "Tên đúng": best_match["ho_ten"] if "Sai họ tên" in loi_msg_best else "-",
+                                                "Đơn vị (File)": dv_hv_chuan if "Sai đơn vị" in loi_msg_best else "-",
+                                                "Đơn vị đúng": best_match["don_vi_chuan"] if "Sai đơn vị" in loi_msg_best else "-",
+                                                "Lỗi": " & ".join(loi_msg_best)
                                             })
                                     else:
                                         results.append({
@@ -758,14 +799,12 @@ with tab_doi_chieu:
                                             "Tên (File)": ho_ten, "Tên đúng": "❌ KHÔNG CÓ TRONG GỐC",
                                             "Đơn vị (File)": dv_hv_chuan, "Đơn vị đúng": "-", "Lỗi": "Mã NV lạ"
                                         })
+                    conn.close()
 
-                    # ==========================================
-                    # 3. HIỂN THỊ BÁO CÁO
-                    # ==========================================
                     st.divider()
                     st.subheader(f"📊 Kết quả kiểm tra (Tổng quét: {total_checked} HV)")
                     if not results:
-                        st.success("🎉 Tuyệt vời! Danh sách khớp 100% với dữ liệu gốc (Cả Mã NV, Tên và Đơn vị).")
+                        st.success("🎉 Tuyệt vời! Danh sách khớp 100% với Cơ sở dữ liệu gốc.")
                     else:
                         df_res = pd.DataFrame(results)
                         st.error(f"Phát hiện {len(df_res)} lỗi cần chỉnh sửa.")
@@ -775,7 +814,7 @@ with tab_doi_chieu:
                         st.download_button("📥 Tải danh sách lỗi (.csv)", data=csv, file_name='loi_danh_sach.csv', mime='text/csv')
 
                 except Exception as e:
-                    st.error(f"❌ Lỗi xử lý: {str(e)}")
+                    st.error(f"❌ Lỗi xử lý dữ liệu: {str(e)}")
 
 # --- TAB 2: CHỨC NĂNG TẠO KHUNG TUẦN TỪ KHĐT ---
 with tab_tao_khung:
@@ -792,7 +831,7 @@ with tab_tao_khung:
         danh_sach_tuan = list(dict_khdt.keys())
         
         chon_tat_ca = st.checkbox("Tạo toàn bộ các tuần (Xuất file ZIP)")
-        tuan_duoc_chon = danh_sach_tuan if chon_tat_ca else st.multiselect("Hoặc tuỳ chọn các tuần cụ thể (Nếu chỉ chọn 1 tuần, sẽ tải thẳng file Excel):", options=danh_sach_tuan, default=danh_sach_tuan[:1] if danh_sach_tuan else [])
+        tuan_duoc_chon = danh_sach_tuan if chon_tat_ca else st.multiselect("Hoặc tuỳ chọn các tuần cụ thể:", options=danh_sach_tuan, default=danh_sach_tuan[:1] if danh_sach_tuan else [])
             
         if st.button("🚀 Tạo Template rỗng", type="primary"):
             if tuan_duoc_chon:
@@ -810,8 +849,7 @@ with tab_tao_khung:
 
 # --- TAB 3: CHỨC NĂNG NHỒI HỌC VIÊN TỰ ĐỘNG ---
 with tab_nhoi_hv:
-    st.info("💡 Tính năng đọc thông tin lớp ở ô D7 và D9 của file Khung (Bước 2) để tự động bốc toàn bộ Học viên ở file Danh sách tháng (DSHV) dán vào trang tương ứng.")
-    
+    st.info("💡 Tính năng đọc thông tin lớp ở ô D7 và D9 của file Khung để tự động bốc toàn bộ Học viên dán vào trang tương ứng.")
     col_x, col_y = st.columns(2)
     with col_x:
         file_template_in = st.file_uploader("📂 1. Chọn file Khung rỗng (File tuần đã tạo ở Bước 2)", type=["xlsx"], key="tpl_in")
@@ -833,3 +871,150 @@ with tab_nhoi_hv:
                 )
         else:
             st.warning("⚠️ Bạn cần tải lên đủ cả file Khung Tuần và file Danh Sách Học Viên tháng để thực hiện!")
+
+# --- TAB 4: QUẢN LÝ CƠ SỞ DỮ LIỆU CHUYÊN NGHIỆP (MỚI THÊM) ---
+with tab_ql_csdl:
+    st.header("🗄️ Khu vực Quản trị Cơ sở dữ liệu Nhân viên")
+    
+    # Hiển thị nhanh số lượng bản ghi hiện có
+    conn = get_db_connection()
+    current_total = conn.execute("SELECT COUNT(*) FROM nhan_vien").fetchone()[0]
+    
+    col_metric1, col_metric2 = st.columns(2)
+    with col_metric1:
+        st.metric(label="👥 Tổng số Nhân viên trong CSDL hiện tại", value=f"{current_total:,} nhân sự")
+    with col_metric2:
+        st.success("💡 Cấu trúc bảng này chuẩn chỉnh tương thích Schema với PostgreSQL / Supabase sau này.")
+        
+    st.subheader("📥 Nạp / Làm mới Danh sách Nhân viên (Master File DSNV)")
+    file_dsnv = st.file_uploader("Tải lên File Danh sách nhân viên toàn công ty mới nhất (.xlsx, .xls, .csv)", type=["xlsx", "xls", "csv"])
+    
+    if st.button("💾 Thực hiện Import/Cập nhật CSDL", type="primary"):
+        if not file_dsnv:
+            st.warning("⚠️ Vui lòng chọn file DSNV master trước khi bấm import!")
+        else:
+            with st.spinner("Đang phân tích và đối chiếu dữ liệu cũ - mới..."):
+                try:
+                    df_dsnv_all = read_excel_values_only(file_dsnv)
+                    kw_ma = ['mãnv', 'mnv', 'manv', 'mãsốnv', 'mãnhânviên', 'staffid']
+                    kw_ten = ['họvàtên', 'họtên', 'fullname']
+                    kw_dv = ['phòngban', 'phòng', 'phongban', 'phong'] 
+
+                    parsed_new_records = []
+                    seen_records = set() # Chống lặp dữ liệu trong chính file Excel
+
+                    # 1. Đọc và lọc sạch file Excel mới
+                    for s_name, df_s in df_dsnv_all.items():
+                        c_ma, c_ten, c_dv = -1, -1, -1
+                        for idx, row in df_s.iterrows():
+                            row_raw = [str(x).strip() if x is not None else "" for x in row.values]
+                            row_cleaned = [clean_header(x) for x in row_raw]
+                            
+                            tmp_ma = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ma)), -1)
+                            tmp_ten = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_ten)), -1)
+                            tmp_dv = next((i for i, v in enumerate(row_cleaned) if any(k in v for k in kw_dv)), -1)
+                            
+                            if tmp_ma != -1 and tmp_ten != -1:
+                                c_ma, c_ten = tmp_ma, tmp_ten
+                                if tmp_dv != -1: c_dv = tmp_dv
+                                continue
+                                
+                            if c_ma != -1 and c_ten != -1:
+                                m_val = row_raw[c_ma].replace('.0', '').strip()
+                                t_val = row_raw[c_ten].strip()
+                                dv_val_raw = row_raw[c_dv] if c_dv != -1 else ""
+                                dv_chuan_hoa = chuan_hoa_don_vi(dv_val_raw)
+                                
+                                if m_val and m_val.lower() not in ['none', 'nan', '']:
+                                    record_key = (m_val, t_val, dv_chuan_hoa)
+                                    if record_key not in seen_records:
+                                        seen_records.add(record_key)
+                                        parsed_new_records.append({
+                                            "ma_nv": m_val, "ho_ten": t_val,
+                                            "don_vi_goc": dv_val_raw, "don_vi_chuan": dv_chuan_hoa
+                                        })
+
+                    if not parsed_new_records:
+                        st.error("❌ Không tìm thấy dòng dữ liệu nhân sự hợp lệ nào từ file đã chọn.")
+                    else:
+                        conn = get_db_connection()
+                        # 2. Rút toàn bộ dữ liệu CSDL cũ ra để so sánh
+                        old_data = conn.execute("SELECT * FROM nhan_vien").fetchall()
+                        old_dict = {}
+                        for r in old_data:
+                            m = r["ma_nv"]
+                            if m not in old_dict: old_dict[m] = []
+                            old_dict[m].append(dict(r))
+
+                        insert_data = []
+                        update_data = []
+                        log_changes = []
+
+                        # 3. Thuật toán so khớp (UPSERT Logic)
+                        for new_r in parsed_new_records:
+                            ma = new_r["ma_nv"]
+                            ten = new_r["ho_ten"]
+                            dv = new_r["don_vi_chuan"]
+                            dv_goc = new_r["don_vi_goc"]
+
+                            if ma not in old_dict:
+                                # HOÀN TOÀN MỚI
+                                insert_data.append((ma, ten, dv_goc, dv))
+                                log_changes.append({"Mã NV": ma, "Họ tên": ten, "Đơn vị": dv, "Hành động": "✨ Thêm mới", "Chi tiết thay đổi": "Nhân sự mới"})
+                            else:
+                                old_records = old_dict[ma]
+                                # Kiểm tra xem có khớp 100% không
+                                exact_match = any(o["ho_ten"] == ten and o["don_vi_chuan"] == dv for o in old_records)
+                                
+                                if exact_match:
+                                    continue # Bỏ qua, không làm gì cả để nhẹ hệ thống
+                                
+                                # CÓ SỰ THAY ĐỔI -> Đưa vào danh sách Cập nhật (Update)
+                                best_old = old_records[0]
+                                changes = []
+                                if best_old["ho_ten"] != ten:
+                                    changes.append(f"Tên: {best_old['ho_ten']} ➔ {ten}")
+                                if best_old["don_vi_chuan"] != dv:
+                                    changes.append(f"ĐV: {best_old['don_vi_chuan']} ➔ {dv}")
+                                
+                                chi_tiet = " | ".join(changes)
+                                update_data.append((ten, dv_goc, dv, best_old["id"]))
+                                log_changes.append({"Mã NV": ma, "Họ tên": ten, "Đơn vị": dv, "Hành động": "⚠️ Cập nhật", "Chi tiết thay đổi": chi_tiet})
+
+                        # 4. Thực thi vào Database
+                        if insert_data:
+                            conn.executemany("INSERT INTO nhan_vien (ma_nv, ho_ten, don_vi_goc, don_vi_chuan) VALUES (?, ?, ?, ?)", insert_data)
+                        if update_data:
+                            conn.executemany("UPDATE nhan_vien SET ho_ten = ?, don_vi_goc = ?, don_vi_chuan = ? WHERE id = ?", update_data)
+                        
+                        conn.commit()
+                        conn.close()
+
+                        # 5. Hiển thị báo cáo Cảnh báo/Cập nhật cho người dùng
+                        if log_changes:
+                            st.success(f"🎉 Đồng bộ hoàn tất! Đã thêm mới {len(insert_data)} và Cập nhật {len(update_data)} nhân sự.")
+                            df_log = pd.DataFrame(log_changes)
+                            st.dataframe(df_log, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("✅ Dữ liệu trong file Excel hoàn toàn khớp với CSDL hiện tại. Không có thay đổi nào được thực hiện.")
+
+                except Exception as e:
+                    st.error(f"❌ Lỗi trong quá trình nạp CSDL: {str(e)}")
+                                        
+    st.divider()
+    st.subheader("🔍 Tìm kiếm nhanh nhân sự trong CSDL nội bộ")
+    search_query = st.text_input("Nhập Mã nhân viên hoặc Tên cần tra cứu thử:")
+    if search_query:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT ma_nv, ho_ten, don_vi_goc, don_vi_chuan FROM nhan_vien WHERE ma_nv LIKE ? OR ho_ten LIKE ? LIMIT 20",
+            (f"%{search_query}%", f"%{search_query}%")
+        )
+        rows = cursor.fetchall()
+        if rows:
+            df_preview = pd.DataFrame([dict(r) for r in rows])
+            st.dataframe(df_preview, use_container_width=True)
+        else:
+            st.info("Không tìm thấy kết quả khớp.")
+            
+    conn.close()
