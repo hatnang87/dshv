@@ -407,30 +407,25 @@ def tao_file_excel_mot_tuan(tuan_name, dslop):
         cell.font = Font(name='Times New Roman', size=12, bold=True)
     
     for idx, lop in enumerate(dslop):
+        stt = idx + 1
         row_idx = idx + 2
-        ws_index[f'A{row_idx}'] = idx + 1
+        ws_index[f'A{row_idx}'] = stt
         
-        # [SỬA LỖI 1] Lọc bỏ toàn bộ dấu ngắt dòng (\n, \r) và tab (\t) trước khi tạo tên sheet
-        clean_ten_lop = re.sub(r"[\n\r\t]", " ", str(lop["ten_lop"]))
-        safe_name = re.sub(r"[\\/*?:\[\]'\"]", "", clean_ten_lop).strip()[:30]
-        
-        if not safe_name: 
-            safe_name = f"Lop_Hoc"
-        while safe_name in wb.sheetnames: 
-            safe_name = safe_name[:25] + f"_{idx}"
+        # [SỬA ĐỔI] Lấy luôn STT làm tên Sheet
+        safe_name = str(stt)
             
         ws = wb.create_sheet(title=safe_name)
         
-        # [SỬA LỖI 2] Dùng công thức =HYPERLINK của Excel thay vì gán trực tiếp thuộc tính .hyperlink
-        # Tránh hoàn toàn lỗi hỏng cấu trúc XML của openpyxl
+        # Tạo nút quay lại mục lục
         ws['A1'].value = '=HYPERLINK("#\'MucLuc\'!A1", "⬅️ Trở về Mục lục")'
         ws['A1'].font = Font(name='Times New Roman', size=12, color="0563C1", underline="single", bold=True)
         
-        # Xử lý dấu ngoặc kép (") trong tên lớp để không làm gãy công thức Excel
+        # Làm sạch tên lớp để hiển thị trong Mục Lục không bị lỗi
+        clean_ten_lop = re.sub(r"[\n\r\t]", " ", str(lop["ten_lop"]))
         safe_display_name = clean_ten_lop.replace('"', '""') 
         
+        # Ghi thông tin vào sheet Mục lục và tạo đường link trỏ sang sheet lớp (hiện tại tên là STT)
         link_cell = ws_index[f'B{row_idx}']
-        # Ghi thẳng công thức HYPERLINK vào ô Mục Lục
         link_cell.value = f'=HYPERLINK("#\'{safe_name}\'!A1", "{safe_display_name}")'
         link_cell.font = Font(name='Times New Roman', size=12, color="0563C1", underline="single")
         
