@@ -388,76 +388,6 @@ def doc_khdt_gom_theo_tuan(file_khdt):
         
     return dict_theo_tuan
 
-
-    wb = openpyxl.Workbook()
-    ws_index = wb.active
-    ws_index.title = "MucLuc"
-    ws_index.column_dimensions['A'].width = 8
-    ws_index.column_dimensions['B'].width = 50
-    ws_index.column_dimensions['C'].width = 25
-    ws_index.column_dimensions['D'].width = 20
-    ws_index.column_dimensions['E'].width = 25
-    ws_index.column_dimensions['F'].width = 20
-    
-    headers = ["STT", "TÊN LỚP (BẤM VÀO ĐỂ TỚI SHEET)", "LOẠI HÌNH/HÌNH THỨC", "THỜI GIAN", "ĐỊA ĐIỂM", "GIÁO VIÊN"]
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws_index.cell(row=1, column=col_idx, value=header)
-        cell.font = Font(bold=True)
-    
-    for idx, lop in enumerate(dslop):
-        row_idx = idx + 2
-        ws_index[f'A{row_idx}'] = idx + 1
-        
-        safe_name = re.sub(r'[\\/*?:\[\]]', '', lop["ten_lop"])[:30]
-        if not safe_name: safe_name = f"Lop_Hoc"
-        while safe_name in wb.sheetnames: safe_name = safe_name[:27] + f"_{idx}"
-            
-        ws = wb.create_sheet(title=safe_name)
-        ws['A1'] = "⬅️ Trở về Mục lục"
-        ws['A1'].hyperlink = "#'MucLuc'!A1"
-        ws['A1'].font = Font(color="0563C1", underline="single", bold=True)
-        
-        link_cell = ws_index[f'B{row_idx}']
-        link_cell.value = lop["ten_lop"]
-        link_cell.hyperlink = f"#'{safe_name}'!A1"
-        link_cell.font = Font(color="0563C1", underline="single")
-        
-        ws_index[f'C{row_idx}'] = f"{lop['loai_hinh']}/{lop['hinh_thuc']}"
-        ws_index[f'D{row_idx}'] = lop["thoi_gian"]
-        ws_index[f'E{row_idx}'] = lop["dia_diem"]
-        ws_index[f'F{row_idx}'] = lop["giao_vien"]
-        
-        ws['D7'], ws['D9'], ws['D10'], ws['D11'] = lop["ten_lop"], lop["thoi_gian"], lop["dia_diem"], lop["giao_vien"]
-        ws['B7'] = f"- Môn học/Khóa học:"
-        ws['B8'] = f"- Loại hình/hình thức đào tạo: {lop['loai_hinh']}/{lop['hinh_thuc']}"
-        ws['B9'] = f"- Thời gian:"
-        ws['B10'] = f"- Địa điểm:"
-        ws['B11'] = f"- Giáo viên:"
-        
-        headers = ["STT", "Mã NV", "Họ tên", "Đơn vị", "Ghi chú"]
-        for c_idx, h in enumerate(headers, start=1):
-            ws.cell(row=13, column=c_idx, value=h).font = Font(bold=True)
-            
-        ws.column_dimensions['B'].width = 15
-        ws.column_dimensions['C'].width = 30
-        ws.column_dimensions['D'].width = 20
-        
-        for r_idx in range(14, 29):
-            ws.cell(row=r_idx, column=1, value=r_idx-13)
-            
-    excel_buffer = io.BytesIO()
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        if "mục lục" not in sheet_name.lower():
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value is not None:
-                        is_bold = cell.font.bold if cell.font else False
-                        cell.font = Font(name='Times New Roman', size=12, bold=is_bold)
-            ws.column_dimensions['B'].width = 30
-    wb.save(excel_buffer)
-    excel_buffer.seek(0)
-    return excel_buffer
 def tao_file_excel_mot_tuan(tuan_name, dslop):
     wb = openpyxl.Workbook()
     ws_index = wb.active
@@ -480,8 +410,10 @@ def tao_file_excel_mot_tuan(tuan_name, dslop):
         row_idx = idx + 2
         ws_index[f'A{row_idx}'] = idx + 1
         
-        # [BẢO VỆ FILE] Loại bỏ hoàn toàn ký tự đặc biệt và dấu nháy để tránh vỡ cấu trúc hyperlink Excel
-        safe_name = re.sub(r"[\\/*?:\[\]'\"]", "", lop["ten_lop"])[:30].strip()
+        # [SỬA LỖI 1] Lọc bỏ toàn bộ dấu ngắt dòng (\n, \r) và tab (\t) trước khi tạo tên sheet
+        clean_ten_lop = re.sub(r"[\n\r\t]", " ", str(lop["ten_lop"]))
+        safe_name = re.sub(r"[\\/*?:\[\]'\"]", "", clean_ten_lop).strip()[:30]
+        
         if not safe_name: 
             safe_name = f"Lop_Hoc"
         while safe_name in wb.sheetnames: 
@@ -489,15 +421,17 @@ def tao_file_excel_mot_tuan(tuan_name, dslop):
             
         ws = wb.create_sheet(title=safe_name)
         
-        # Tạo nút quay lại mục lục tại ô A1 của sheet lớp học
-        ws['A1'] = "⬅️ Trở về Mục lục"
-        ws['A1'].hyperlink = "#'MucLuc'!A1"
+        # [SỬA LỖI 2] Dùng công thức =HYPERLINK của Excel thay vì gán trực tiếp thuộc tính .hyperlink
+        # Tránh hoàn toàn lỗi hỏng cấu trúc XML của openpyxl
+        ws['A1'].value = '=HYPERLINK("#\'MucLuc\'!A1", "⬅️ Trở về Mục lục")'
         ws['A1'].font = Font(name='Times New Roman', size=12, color="0563C1", underline="single", bold=True)
         
-        # Ghi thông tin vào sheet Mục lục và tạo đường link trỏ sang sheet lớp
+        # Xử lý dấu ngoặc kép (") trong tên lớp để không làm gãy công thức Excel
+        safe_display_name = clean_ten_lop.replace('"', '""') 
+        
         link_cell = ws_index[f'B{row_idx}']
-        link_cell.value = lop["ten_lop"]
-        link_cell.hyperlink = f"#'{safe_name}'!A1"
+        # Ghi thẳng công thức HYPERLINK vào ô Mục Lục
+        link_cell.value = f'=HYPERLINK("#\'{safe_name}\'!A1", "{safe_display_name}")'
         link_cell.font = Font(name='Times New Roman', size=12, color="0563C1", underline="single")
         
         ws_index[f'C{row_idx}'] = f"{lop['loai_hinh']}/{lop['hinh_thuc']}"
