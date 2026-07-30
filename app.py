@@ -355,7 +355,10 @@ def doc_khdt_gom_theo_tuan(file_khdt):
                 ten_final = f"{c['ten_goc']}/{c['khoa_hoc_la_ma']}"
             if c["nhom_dates"]:
                 start, end = c["nhom_dates"][0][0], c["nhom_dates"][-1][1]
-                thoi_gian = f"{start} - {end}" if start != end else start
+                if start and end:
+                    thoi_gian = f"{start} - {end}"
+                else:
+                    thoi_gian = start or end
             else:
                 s, e = c["tu_ngay_goc"], c["den_ngay_goc"]
                 thoi_gian = f"{s} - {e}" if s and e and s != e else (s or e)
