@@ -867,65 +867,37 @@ with tab_ql_csdl:
                         st.error("❌ Không tìm thấy dòng dữ liệu nhân sự hợp lệ nào từ file đã chọn.")
                     else:
                         conn = get_db_connection()
-                        # 2. Rút toàn bộ dữ liệu CSDL cũ ra để so sánh
-                        old_data = conn.execute("SELECT * FROM nhan_vien").fetchall()
-                        old_dict = {}
-                        for r in old_data:
-                            m = r["ma_nv"]
-                            if m not in old_dict: old_dict[m] = []
-                            old_dict[m].append(dict(r))
 
-                        insert_data = []
-                        update_data = []
-                        log_changes = []
+                        # XÓA TOÀN BỘ DỮ LIỆU CŨ
+                        conn.execute("DELETE FROM nhan_vien")
 
-                        # 3. Thuật toán so khớp (UPSERT Logic)
-                        for new_r in parsed_new_records:
-                            ma = new_r["ma_nv"]
-                            ten = new_r["ho_ten"]
-                            dv = new_r["don_vi_chuan"]
-                            dv_goc = new_r["don_vi_goc"]
+                        # NẠP LẠI TOÀN BỘ DSNV MỚI
+                        conn.executemany(
+                            """
+                            INSERT INTO nhan_vien
+                            (ma_nv, ho_ten, don_vi_goc, don_vi_chuan)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            [
+                                (
+                                    r["ma_nv"],
+                                    r["ho_ten"],
+                                    r["don_vi_goc"],
+                                    r["don_vi_chuan"]
+                                )
+                                for r in parsed_new_records
+                            ]
+                        )
 
-                            if ma not in old_dict:
-                                # HOÀN TOÀN MỚI
-                                insert_data.append((ma, ten, dv_goc, dv))
-                                log_changes.append({"Mã NV": ma, "Họ tên": ten, "Đơn vị": dv, "Hành động": "✨ Thêm mới", "Chi tiết thay đổi": "Nhân sự mới"})
-                            else:
-                                old_records = old_dict[ma]
-                                # Kiểm tra xem có khớp 100% không
-                                exact_match = any(o["ho_ten"] == ten and o["don_vi_chuan"] == dv for o in old_records)
-                                
-                                if exact_match:
-                                    continue # Bỏ qua, không làm gì cả để nhẹ hệ thống
-                                
-                                # CÓ SỰ THAY ĐỔI -> Đưa vào danh sách Cập nhật (Update)
-                                best_old = old_records[0]
-                                changes = []
-                                if best_old["ho_ten"] != ten:
-                                    changes.append(f"Tên: {best_old['ho_ten']} ➔ {ten}")
-                                if best_old["don_vi_chuan"] != dv:
-                                    changes.append(f"ĐV: {best_old['don_vi_chuan']} ➔ {dv}")
-                                
-                                chi_tiet = " | ".join(changes)
-                                update_data.append((ten, dv_goc, dv, best_old["id"]))
-                                log_changes.append({"Mã NV": ma, "Họ tên": ten, "Đơn vị": dv, "Hành động": "⚠️ Cập nhật", "Chi tiết thay đổi": chi_tiet})
-
-                        # 4. Thực thi vào Database
-                        if insert_data:
-                            conn.executemany("INSERT INTO nhan_vien (ma_nv, ho_ten, don_vi_goc, don_vi_chuan) VALUES (?, ?, ?, ?)", insert_data)
-                        if update_data:
-                            conn.executemany("UPDATE nhan_vien SET ho_ten = ?, don_vi_goc = ?, don_vi_chuan = ? WHERE id = ?", update_data)
-                        
                         conn.commit()
+
+                        tong_nv = len(parsed_new_records)
+
                         conn.close()
 
-                        # 5. Hiển thị báo cáo Cảnh báo/Cập nhật cho người dùng
-                        if log_changes:
-                            st.success(f"🎉 Đồng bộ hoàn tất! Đã thêm mới {len(insert_data)} và Cập nhật {len(update_data)} nhân sự.")
-                            df_log = pd.DataFrame(log_changes)
-                            st.dataframe(df_log, use_container_width=True, hide_index=True)
-                        else:
-                            st.info("✅ Dữ liệu trong file Excel hoàn toàn khớp với CSDL hiện tại. Không có thay đổi nào được thực hiện.")
+                        st.success(
+                            f"✅ Đã thay thế toàn bộ dữ liệu cũ bằng {tong_nv:,} nhân sự từ file DSNV mới."
+                        )
 
                 except Exception as e:
                     st.error(f"❌ Lỗi trong quá trình nạp CSDL: {str(e)}")
