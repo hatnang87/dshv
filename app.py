@@ -373,12 +373,13 @@ def doc_khdt_gom_theo_tuan(file_khdt):
         dd_lt, dd_th = c["dia_diem_lt"] or c["dia_diem"], c["dia_diem_th"] or c["dia_diem"]
         final_dia_diem = f"{dd_lt} + {dd_th}" if dd_lt and dd_th and dd_lt != dd_th else (dd_lt or dd_th or c["dia_diem"])
         
+        thoi_gian_goc = thoi_gian
         t_chuan = chuan_hoa_thoi_gian(thoi_gian)
         start_date, end_date = parse_date_range(t_chuan)
         week_labels = week_labels_from_range(start_date, end_date) if start_date and end_date else ["Tuần_Khác"]
 
         lop_info = {
-            "ten_lop": ten_final, "thoi_gian": thoi_gian, "hinh_thuc": c["hinh_thuc"],
+            "ten_lop": ten_final, "thoi_gian": thoi_gian_goc, "hinh_thuc": c["hinh_thuc"],
             "loai_hinh": c["loai_hinh"], "dia_diem": final_dia_diem, "giao_vien": c["gv_lt"]
         }
 
