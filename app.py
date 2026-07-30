@@ -367,9 +367,12 @@ def doc_khdt_gom_theo_tuan(file_khdt):
             s = c["lt_dates"][0] if c["lt_dates"] else c["tu_ngay_goc"]
             e = c["th_dates"][-1] if c["th_dates"] else c["den_ngay_goc"]
             s_clean, e_clean = re.sub(r'^[CSTcst]', '', str(s)).strip(), re.sub(r'^[CSTcst]', '', str(e)).strip()
-            if s_clean and e_clean and s_clean == e_clean: thoi_gian = s_clean
-            elif s_clean and e_clean: thoi_gian = f"{s} - {e}" 
-            else: thoi_gian = s_clean or e_clean
+            if s_clean and e_clean and s_clean == e_clean:
+                thoi_gian = s if s else e
+            elif s_clean and e_clean:
+                thoi_gian = f"{s} - {e}"
+            else:
+                thoi_gian = s or e
         
         if not thoi_gian: continue 
         
