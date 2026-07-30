@@ -188,6 +188,59 @@ def chuan_hoa_don_vi(dv_str):
             return val
     return str(dv_str).strip().upper()
 
+def format_khdt_display(thoi_gian):
+    """
+    Chuẩn hóa hiển thị thời gian trên KHĐT khung
+
+    Ví dụ:
+    C7/8                -> C7/8/2026
+    5/8                 -> 5/8/2026
+    C7/8 - C7/8         -> C7/8/2026
+    5/8 - 10/8          -> 5-10/8/2026
+    30/7 - 6/8          -> 30/7-6/8/2026
+    S7/8 - T8/8         -> S7/8-T8/8/2026
+    """
+
+    if not thoi_gian:
+        return ""
+
+    tg = str(thoi_gian).strip()
+
+    # Chuẩn hóa dấu gạch
+    tg = re.sub(r"\s*-\s*", "-", tg)
+
+    # 1 ngày: C7/8
+    m = re.match(r'^([CSTcst]?)(\d{1,2})/(\d{1,2})$', tg)
+    if m:
+        prefix, day, month = m.groups()
+        return f"{prefix}{int(day)}/{int(month)}/2026"
+
+    # Khoảng ngày: C7/8-C7/8
+    m = re.match(
+        r'^([CSTcst]?)(\d{1,2})/(\d{1,2})-([CSTcst]?)(\d{1,2})/(\d{1,2})$',
+        tg
+    )
+
+    if m:
+        p1, d1, m1, p2, d2, m2 = m.groups()
+
+        d1 = int(d1)
+        d2 = int(d2)
+        m1_i = int(m1)
+        m2_i = int(m2)
+
+        # C7/8-C7/8 -> C7/8/2026
+        if d1 == d2 and m1_i == m2_i and p1 == p2:
+            return f"{p1}{d1}/{m1_i}/2026"
+
+        # 5/8-10/8 -> 5-10/8/2026
+        if m1_i == m2_i:
+            return f"{d1}-{d2}/{m1_i}/2026"
+
+        # 30/7-6/8 -> 30/7-6/8/2026
+        return f"{d1}/{m1_i}-{d2}/{m2_i}/2026"
+
+    return tg
 # ==========================================
 # CORE LOGIC BÓC TÁCH KHĐT & TRỘN HỌC VIÊN
 # ==========================================
@@ -385,7 +438,7 @@ def doc_khdt_gom_theo_tuan(file_khdt):
         week_labels = week_labels_from_range(start_date, end_date) if start_date and end_date else ["Tuần_Khác"]
 
         lop_info = {
-            "ten_lop": ten_final, "thoi_gian": thoi_gian_goc, "hinh_thuc": c["hinh_thuc"],
+            "ten_lop": ten_final, "thoi_gian": format_khdt_display(thoi_gian_goc), "hinh_thuc": c["hinh_thuc"],
             "loai_hinh": c["loai_hinh"], "dia_diem": final_dia_diem, "giao_vien": c["gv_lt"]
         }
 
