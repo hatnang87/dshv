@@ -246,6 +246,27 @@ def gan_link_logo(xlsx_bytes, dich=f"#'{TEN_MUC_LUC}'!A1"):
     return ra.getvalue()
 
 
+# ---------------------------------------------------------------- metadata cho Tab 3
+TEN_SHEET_META = "_khop"
+COT_META = ("sheet", "ten_lop", "loai_hinh", "tu_ngay", "den_ngay", "ca", "muc_cha", "doi_tuong", "ma_khoa")
+
+
+def ghi_meta(wb, lops):
+    """Sheet ẩn '_khop': mỗi sheet lớp một dòng, để Tab 3 khớp học viên chính xác
+    (mục cha, mã khóa, ngày chuẩn, loại hình… không có trên giao diện của sheet lớp)."""
+    if TEN_SHEET_META in wb.sheetnames:
+        del wb[TEN_SHEET_META]
+    ws = wb.create_sheet(TEN_SHEET_META)
+    ws.append(list(COT_META))
+    for i, lop in enumerate(lops, 1):
+        tg = str(lop.get("thoi_gian") or "")
+        ws.append([str(i), lop.get("ten_lop") or "", lop.get("loai_hinh") or "", lop.get("tu_ngay") or "",
+                   lop.get("den_ngay") or "", tg[:1] if tg[:1] in ("S", "C") else "",
+                   str(lop.get("muc") or "").split(">")[-1].strip(), lop.get("doi_tuong") or "",
+                   tach_ma_khoa(lop.get("doi_tuong") or "") or ""])
+    ws.sheet_state = "hidden"
+
+
 # ---------------------------------------------------------------- điền mẫu / khung cơ bản
 def dien_mau(mau_bytes, lops, ma_loai=None):
     """Điền các lớp vào file mẫu, trả về bytes của một file xlsx.
@@ -270,6 +291,7 @@ def dien_mau(mau_bytes, lops, ma_loai=None):
     for i, lop in enumerate(lops, 1):
         _dien_sheet_lop(wb[str(i)], lop, ma_loai)
     lap_muc_luc(wb[TEN_MUC_LUC], n)
+    ghi_meta(wb, lops)
     buf = io.BytesIO()
     wb.save(buf)
     return gan_link_logo(buf.getvalue())
@@ -340,6 +362,7 @@ def tao_khung_co_ban(lops, ma_loai=None):
                 if cell.value is not None and cell.coordinate != "A1" and not cell.font.bold:
                     cell.font = Font(name=FONT_TEN, size=FONT_CO)
     lap_muc_luc(ws_ml, len(lops), sao_chep_kieu=False)
+    ghi_meta(wb, lops)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
