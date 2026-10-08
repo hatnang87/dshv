@@ -31,6 +31,12 @@ Tài liệu mô tả hiện trạng, lỗi cần sửa, đề xuất cải tiế
 - Chế độ sắp xếp "theo KHĐT" nay là đúng thứ tự dòng trong KHĐT (lớp kéo dài từ KHĐT tháng trước xếp cuối). T9/2026: VNA NVM 19, bổ sung 16, định kỳ 83, khác 22; AGS 17, NCS 7.
 - Đã bỏ khỏi giao diện: tích chọn nhiều miền, chọn tháng xuất, mục "Đối tác" trong danh sách loại hình, bảng sửa trước khi lưu.
 
+**Cập nhật 08/10/2026 — lớp cha không ngày + tên lớp mục "bổ sung":**
+- Dòng lớp **không có ngày** mà ngay sau là các dòng con (`3` → `3.1`, `3.2`) được coi là lớp cha **kể cả khi ô Loại hình của nó có "Ban đầu"** (trước đây chỉ khi trống hoàn toàn → lớp bị bỏ và `3.1`/`3.2` tách thành 2 lớp con). Nếu các con đều là Lý thuyết/Thực hành (+ `Nhóm n`) thì gộp thành **1 lớp** mang tên lớp cha, thời gian từ đầu lý thuyết đến cuối nhóm thực hành (vd `Đóng mở cửa khoang khách tàu bay từ bên ngoài (tàu A320)`, 2–4/10/2026, 16 HV, mã khóa lấy từ dòng con). Kiểm thử trên KHĐT T10/2026 NBA (dòng 70/77/84/91).
+- Lớp thuộc mục cấp 2 **"CHƯƠNG TRÌNH ĐÀO TẠO BỔ SUNG"** (`C.1.3`, `C.2.3`…) có tên chỉ là tên gốc, **không ghép** `/<tên mục La Mã>` (vd `Giáo dục dịch vụ cấp nhân viên`); các mục Chuyên môn nghiệp vụ (`x.2`) vẫn ghép `Môn học/Khóa học`.
+
+- **Bổ sung năng định — mục chỉ gồm Lý thuyết + Thực hành** (vd `XI Điều khiển xe đầu kéo` → `1 Lý thuyết + kiểm tra`, `2 Thực hành + kiểm tra` + `Nhóm n`): gộp thành **1 lớp mang tên mục** (`Điều khiển xe đầu kéo`), thời gian từ đầu lý thuyết đến cuối thực hành, giáo viên/địa điểm/hình thức gộp, như lớp định kỳ. Điều kiện: loại hình là BSND, **tên mục bắt đầu bằng "Điều khiển xe", "Vận hành thiết bị" hoặc "Nghiệp vụ vệ sinh"** (`khdt_core.TIEN_TO_MUC_GOP`, để tránh gộp nhầm; thêm tiền tố mới tại đó), mọi lớp trong mục có tên bắt đầu "Lý thuyết…"/"Thực hành…", có cả lý thuyết lẫn thực hành (mục chỉ có một lớp "Thực hành + kiểm tra" vẫn giữ `Thực hành + kiểm tra/<mục>`; "Kiểm tra lý thuyết cuối khóa" không tính). T10/2026: NBA −3, TSN −3 (T9: TSN −4, DAD −2) lớp so với trước.
+
 **Cần xác nhận:** file mẫu mặc định cho "Ban đầu – NVM" đang là `DS lOP HOC MAU (TỪ - T-2026)` (đoán; sửa trong mau_ds_lop.json hoặc tải mẫu ngay trên giao diện); lớp dạng `3.1` Lý thuyết / `3.2` Thực hành của đối tác đang thành 2 lớp riêng.
 
 ## 1. Tổng quan
