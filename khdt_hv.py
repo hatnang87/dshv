@@ -18,6 +18,7 @@ from copy import copy
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 from openpyxl.formula.translate import Translator
+from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
 import khdt_core
@@ -456,12 +457,47 @@ def _mo_rong_bang(ws, cuoi, k):
                 cell.value = re.sub(r"(\$L\$\d+:\$L)(\d+)", lambda m: m.group(1) + str(max(int(m.group(2)), moi)), v)
 
 
+def _thu_gon_bang(ws, bat_dau, cuoi, k):
+    """Bỏ k dòng thừa ở cuối bảng học viên (mẫu 20 dòng mà lớp chỉ 10 người): dời khối chân trang lên, giữ ô gộp/chiều cao."""
+    chan = cuoi + 1
+    max_row, max_col = ws.max_row, ws.max_column
+    dau_bot = cuoi - k + 1  # dòng thừa đầu tiên
+    for rng in list(ws.merged_cells.ranges):
+        if dau_bot <= rng.min_row <= cuoi:  # ô gộp nằm trong vùng dòng thừa bị bỏ theo
+            ws.unmerge_cells(str(rng))
+    for r in range(dau_bot, cuoi + 1):
+        for c in range(1, max_col + 1):
+            ws._cells.pop((r, c), None)
+        ws.row_dimensions[r].height = None
+    if max_row >= chan:
+        chieu_cao = {r: ws.row_dimensions[r].height for r in range(chan, max_row + 1)}
+        for rng in list(ws.merged_cells.ranges):
+            if rng.min_row >= chan:
+                rng.shift(row_shift=-k)
+        ws.move_range(f"A{chan}:{get_column_letter(max_col)}{max_row}", rows=-k, cols=0)
+        for r, h in chieu_cao.items():
+            ws.row_dimensions[r - k].height = h
+        for r in range(max(max_row - k + 1, chan), max_row + 1):  # dòng cuối cũ đã trống
+            ws.row_dimensions[r].height = None
+    # công thức đếm sĩ số ở đầu sheet ($L$14:$L47) chỉ bao tới dòng cuối mới
+    moi = cuoi - k
+    for hang in ws.iter_rows(min_row=1, max_row=bat_dau - 1):
+        for cell in hang:
+            v = cell.value
+            if isinstance(v, str) and v.startswith("=") and "COUNT" in v.upper():
+                cell.value = re.sub(r"(\$L\$\d+:\$L)(\d+)", lambda m: m.group(1) + str(min(int(m.group(2)), moi)), v)
+
+
 def _ghi_hoc_vien(ws, vi_tri, hv):
+    """Ghi học viên vào bảng, giãn/thu gọn cho vừa số người; trả về dòng cuối của bảng sau khi chỉnh."""
     bat_dau, c_ma = vi_tri
     cuoi = _dong_cuoi_bang(ws, bat_dau, c_ma - 1)
     thieu = len(hv) - (cuoi - bat_dau + 1)
     if thieu > 0:
         _mo_rong_bang(ws, cuoi, thieu)
+        cuoi += thieu
+    elif thieu < 0 and hv:
+        _thu_gon_bang(ws, bat_dau, cuoi, -thieu)
         cuoi += thieu
     for r in range(bat_dau, cuoi + 1):
         for c in range(c_ma, c_ma + 3):
@@ -475,6 +511,37 @@ def _ghi_hoc_vien(ws, vi_tri, hv):
         ws.cell(row=r, column=c_ma, value=h["manv"])
         ws.cell(row=r, column=c_ma + 1, value=h["hoten"])
         ws.cell(row=r, column=c_ma + 2, value=h["trungtam"])
+    return cuoi
+
+
+def _cap_nhat_muc_luc(wb, vung):
+    """Cột F 'Số HV' ở sheet Muc luc: =COUNTA(vùng học viên của sheet lớp) — sửa tay vẫn đúng, sheet chưa điền hiện 0.
+
+    vung: {tên sheet: (cột Mã NV, dòng đầu, dòng cuối)}."""
+    ten_ml = next((n for n in wb.sheetnames if norm(n).replace(" ", "") == "mucluc"), None)
+    if not ten_ml or not vung:
+        return
+    ws = wb[ten_ml]
+    ws.column_dimensions["F"].width = 9
+    if (ws.column_dimensions["E"].width or 0) < 34:  # giáo viên dài tràn sang cột F nên nới cột E
+        ws.column_dimensions["E"].width = 34
+    f2 = ws["F2"]
+    f2.value = "Số HV"
+    f2._style = copy(ws["E2"]._style)
+    f2.alignment = Alignment(horizontal="center", vertical="center")
+    for r in range(3, ws.max_row + 1):
+        link = ws.cell(row=r, column=2).hyperlink
+        m = re.match(r"'?([^'!]+)'?!", link.location or "") if link else None
+        ten = m.group(1) if m else str(ws.cell(row=r, column=1).value or "")
+        if ten not in vung:
+            continue
+        c_ma, a, b = vung[ten]
+        col = get_column_letter(c_ma)
+        o = ws.cell(row=r, column=6)
+        o.value = f"=COUNTA('{ten}'!{col}{a}:{col}{b})"
+        o._style = copy(ws.cell(row=r, column=5)._style)
+        o.alignment = Alignment(horizontal="center", vertical="center")
+        o.font = Font(name="Times New Roman", size=12)
 
 
 def dien_khung(du_lieu, ds_dshv, ten_file=""):
@@ -488,19 +555,22 @@ def dien_khung(du_lieu, ds_dshv, ten_file=""):
                  and norm(ws.title).replace(" ", "") != "mucluc"]
     mo_tas = [mo_ta_sheet(ws, meta.get(ws.title)) for ws in cac_sheet]
     ke_thua_hang(mo_tas)
-    thong_ke = []
+    thong_ke, vung = [], {}
     for ws, mt in zip(cac_sheet, mo_tas):
         if not mt:
             continue
         kq = khop_lop(mt, ds_dshv)
         trang_thai, so_hv = kq["trang_thai"], 0
+        vi_tri = tim_bang_hoc_vien(ws)
         if trang_thai in TT_DA_DIEN_SET:
-            vi_tri = tim_bang_hoc_vien(ws)
             if vi_tri:
-                _ghi_hoc_vien(ws, vi_tri, kq["hv"])
+                cuoi = _ghi_hoc_vien(ws, vi_tri, kq["hv"])
                 so_hv = len(kq["hv"])
+                vung[ws.title] = (vi_tri[1], vi_tri[0], cuoi)
             else:
                 trang_thai = TT_KHONG_BANG
+        elif vi_tri:  # sheet chưa điền: Số HV ở Mục lục đếm trên bảng hiện có (0)
+            vung[ws.title] = (vi_tri[1], vi_tri[0], _dong_cuoi_bang(ws, vi_tri[0], vi_tri[1] - 1))
         d = kq["lop"]
         thong_ke.append(dict(
             file=ten_file, sheet=ws.title, ten_lop=mt["ten_lop"], trang_thai=trang_thai, so_hv=so_hv,
@@ -508,6 +578,7 @@ def dien_khung(du_lieu, ds_dshv, ten_file=""):
             ly_do=kq["ly_do"], co_meta=mt["co_meta"],
             khoa_dshv=[(d["sheet"], d["dong"])] if d and trang_thai in TT_DA_DIEN_SET else [],
             khoa_ung_vien=[(x["sheet"], x["dong"]) for x in kq["ung_vien"]]))
+    _cap_nhat_muc_luc(wb, vung)
     buf = io.BytesIO()
     wb.save(buf)
     try:  # openpyxl ghi lại quan hệ link của logo sai → gắn lại link về 'Muc luc'
@@ -515,6 +586,20 @@ def dien_khung(du_lieu, ds_dshv, ten_file=""):
     except Exception:  # noqa: BLE001 — chỉ là link logo
         ket_qua = buf.getvalue()
     return ket_qua, thong_ke
+
+
+def gan_dung_chung(thong_ke):
+    """Ghi vào mỗi dòng thống kê 'dung_chung': các sheet khác (kể cả ở file khác) đang dùng chung cùng một lớp DSHV.
+
+    Một lớp DSHV dùng được cho nhiều sheet (học viên học cùng lúc nhiều môn); đây chỉ là thông tin để kiểm tra."""
+    theo_lop = {}
+    for t in thong_ke:
+        for k in t["khoa_dshv"]:
+            theo_lop.setdefault(k, []).append(t)
+    for t in thong_ke:
+        khac = [x for k in t["khoa_dshv"] for x in theo_lop[k] if x is not t]
+        t["dung_chung"] = "; ".join(
+            f"{(x['file'] + ' / ') if x['file'] != t['file'] else ''}sheet {x['sheet']} ({x['ten_lop'][:50]})" for x in khac)
 
 
 def lop_dshv_chua_dung(ds_dshv, thong_ke):

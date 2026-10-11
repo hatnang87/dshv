@@ -1,5 +1,6 @@
 """Kiểm thử nhanh khdt_hv với dữ liệu giả lập: `python test_khdt_hv.py` (hoặc pytest)."""
 import io
+import os
 import zipfile
 
 import openpyxl
@@ -54,6 +55,42 @@ def test_dien_khung_nhanh_gian_bang():
     assert khdt_hv.lop_dshv_chua_dung(ds, tk) == []
 
 
+def _dshv_nho_bytes():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Định kỳ"
+    ws.append(["KHÓA HỌC", "LOẠI HÌNH ĐT", "MÃ NHÂN VIÊN", "HỌ VÀ TÊN", "ĐỘI", "TRUNG TÂM", "NGÀY BẮT ĐẦU", "NGÀY KẾT THÚC"])
+    ws.append(["Môn nhỏ", "Định kỳ", None, None, None, None, "5/10", "5/10"])
+    for i in range(5):
+        ws.append([None, None, str(18000 + i), f"HV nhỏ {i}", "QT1", "PVHK", None, None])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_thu_gon_bang_so_hv_dung_chung():
+    """Mẫu 20 dòng mà lớp chỉ 5 học viên: bảng co về 5 dòng, chân trang liền sau; Mục lục có Số HV; 2 sheet dùng chung 1 lớp DSHV."""
+    mau = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mau", "DS lOP HOC ĐINH KỲ  (T 2026).xlsx")
+    with open(mau, "rb") as f:
+        lops = [_lop("Môn nhỏ", "2026-10-05", "2026-10-05", "5/10/2026", loai="DINH_KY") for _ in range(2)]
+        lops.append(_lop("Môn không có", "2026-10-09", "2026-10-09", "9/10/2026", loai="DINH_KY", muc="A > B > Khóa khác"))
+        khung = khdt_export.dien_mau(f.read(), lops, "DINH_KY")
+    ds = khdt_hv.doc_dshv(_dshv_nho_bytes(), 2026)
+    ket_qua, tk = khdt_hv.dien_khung(khung, ds, "k.xlsx")
+    khdt_hv.gan_dung_chung(tk)
+    assert [t["so_hv"] for t in tk] == [5, 5, 0]
+    assert "sheet 2" in tk[0]["dung_chung"] and "sheet 1" in tk[1]["dung_chung"] and tk[2]["dung_chung"] == ""
+    wb = openpyxl.load_workbook(io.BytesIO(ket_qua))
+    ws = wb["1"]
+    assert ws["C14"].value == "18000" and ws["C18"].value == "18004"
+    assert ws["B18"].value is not None and ws["B19"].value is None  # STT dừng ở học viên thứ 5
+    assert "Trưởng Trung tâm" in str(ws["C19"].value)  # chân trang dời lên liền sau dòng cuối
+    assert wb["2"]["C14"].value == "18000"
+    ml = wb["Muc luc"]
+    assert ml["F2"].value == "Số HV" and ml["F3"].value == "=COUNTA('1'!C14:C18)"
+    assert ml["F5"].value.startswith("=COUNTA('3'!C14:")  # sheet chưa điền: đếm trên bảng mẫu → 0
+
+
 def test_gom_file_khung():
     zb = io.BytesIO()
     with zipfile.ZipFile(zb, "w") as z:
@@ -69,5 +106,6 @@ def test_gom_file_khung():
 if __name__ == "__main__":
     test_doc_dshv()
     test_dien_khung_nhanh_gian_bang()
+    test_thu_gon_bang_so_hv_dung_chung()
     test_gom_file_khung()
     print("OK")
