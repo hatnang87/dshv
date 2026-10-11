@@ -402,7 +402,7 @@ with tab_tao_khung:
             "Kiểu file xuất",
             ["Điền vào file mẫu (đủ logo/định dạng, mỗi file vài giây)",
              "File nhanh: chỉ có dữ liệu, đúng vị trí ô như mẫu (tự copy vào file mẫu)"],
-            index=1 if khdt_export.TREN_CLOUD else 0,  # máy chủ cloud ít RAM/CPU → mặc định file nhanh
+            index=0,  # mặc định: file danh sách lớp học khung chuẩn (điền vào file mẫu)
             horizontal=False)
         xuat_nhanh = kieu_xuat.startswith("File nhanh")
 
