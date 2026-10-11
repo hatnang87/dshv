@@ -12,3 +12,7 @@ __pycache__/
 *.db
 backup/
 dsnv_cache.json
+
+# File mau co du lieu nhan su (khong dua len GitHub)
+DS HV*.xlsx
+Copy of KH*T*.xlsx
