@@ -5,6 +5,8 @@ sheet 'Muc luc' + các sheet lớp đặt tên '1', '2', … với D7 tên lớp
 D11 giáo viên, B8 loại hình/hình thức. Số lớp nhiều hơn số sheet của mẫu thì tự thêm sheet
 (nhân bản từ sheet '1', thêm dòng tương ứng vào Mục lục). Không có mẫu thì dùng khung cơ bản
 (chỉ có dữ liệu, cùng vị trí ô như mẫu) để người dùng tự copy vào mẫu.
+Sau các sheet lớp luôn có SO_SHEET_DU_PHONG sheet trống (bảng HV SO_DONG_HV_DU_PHONG dòng, đã có dòng
+Mục lục) để người dùng tự thêm lớp.
 """
 import io
 import json
@@ -33,6 +35,9 @@ TEN_MUC_LUC = "Muc luc"
 FONT_TEN = "Times New Roman"
 FONT_CO = 12
 MAU_LINK = "0563C1"
+SO_SHEET_DU_PHONG = 10  # sheet lớp trống cuối file để thêm lớp thủ công
+SO_DONG_HV_DU_PHONG = 30
+NHAN_B8 = "- Loại hình/hình thức đào tạo: "
 
 
 def doc_cau_hinh():
@@ -85,7 +90,7 @@ def _ghi(ws, toa_do, gia_tri):
 
 
 def _hinh_thuc_b8(lop):
-    return f"- Loại hình/hình thức đào tạo: {lop['loai_hinh_nhan']}/{lop['hinh_thuc']}"
+    return f"{NHAN_B8}{lop['loai_hinh_nhan']}/{lop['hinh_thuc']}"
 
 
 def _so_sheet_lop(wb):
@@ -108,6 +113,24 @@ def _dien_sheet_lop(ws, lop, ma_loai, nua_phai=True):
                 ws["L11"].font = Font(name=FONT_TEN, size=FONT_CO)
                 ws["L11"].alignment = Alignment(vertical="center")
     chuan_hoa_sheet_lop(ws, nua_phai)
+
+
+def _xoa_sheet_lop(ws):
+    """Sheet dự phòng: bỏ dữ liệu lớp (sheet mẫu có thể còn dữ liệu cũ), bảng HV trống đủ SO_DONG_HV_DU_PHONG dòng."""
+    from khdt_hv import _dong_cuoi_bang, _ghi_hoc_vien, _mo_rong_bang, tim_bang_hoc_vien  # khdt_hv import module này
+    for o in ("D7", "D9", "D10", "D11", "L11"):
+        _ghi(ws, o, "")
+    _ghi(ws, "B8", NHAN_B8)
+    ws.row_dimensions[7].height = None
+    vi_tri = tim_bang_hoc_vien(ws)
+    if not vi_tri:
+        return
+    _ghi_hoc_vien(ws, vi_tri, [])
+    bat_dau, c_ma = vi_tri
+    cuoi = _dong_cuoi_bang(ws, bat_dau, c_ma - 1)
+    thieu = SO_DONG_HV_DU_PHONG - (cuoi - bat_dau + 1)
+    if thieu > 0:
+        _mo_rong_bang(ws, cuoi, thieu)
 
 
 def _gop_trai(ws, vung, cot):
@@ -155,6 +178,8 @@ def _nhan_ban_sheet(wb, nguon, anh_nguon, ten):
     """Nhân bản sheet lớp (kể cả logo — openpyxl không tự copy ảnh) khi vượt số sheet của mẫu."""
     moi = wb.copy_worksheet(nguon)
     moi.title = ten
+    for rng in moi.merged_cells.ranges:  # copy_worksheet không đổi ô trong vùng gộp thành MergedCell như khi đọc file
+        moi._clean_merge_range(rng)
     for data, anchor, rong, cao in anh_nguon:
         ban = XlImage(io.BytesIO(data))
         ban.anchor = copy(anchor)
@@ -195,7 +220,8 @@ def lap_muc_luc(ws_ml, n, sao_chep_kieu=True):
             continue
         ws_ml.cell(row=r, column=1).value = i
         for c, o in zip((2, 3, 4, 5), ("D7", "D9", "D10", "D11")):
-            ws_ml.cell(row=r, column=c).value = f"='{i}'!${o[0]}${o[1:]}"
+            o = f"'{i}'!${o[0]}${o[1:]}"
+            ws_ml.cell(row=r, column=c).value = f'=IF({o}="","",{o})'  # sheet dự phòng còn trống: không hiện 0
         link = ws_ml.cell(row=r, column=2)
         link.hyperlink = Hyperlink(ref=link.coordinate, location=f"'{i}'!A1")
 
@@ -215,7 +241,9 @@ def lap_muc_luc(ws_ml, n, sao_chep_kieu=True):
 _ID_LINK = "rIdLogoMucLuc"
 _RE_CNVPR = re.compile(r"<cNvPr\b([^>]*?)(/>|>)")
 _RE_HLINK = re.compile(r"<a:hlinkClick\b[^>]*?(?:/>|>.*?</a:hlinkClick>)", re.S)
-_LOAI_REL_LINK = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+_NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_LOAI_REL_LINK = _NS_R + "/hyperlink"
 
 
 def gan_link_logo(xlsx_bytes, dich=f"#'{TEN_MUC_LUC}'!A1"):
@@ -235,7 +263,8 @@ def gan_link_logo(xlsx_bytes, dich=f"#'{TEN_MUC_LUC}'!A1"):
 
                 def them(m):
                     thuoc_tinh, ket = m.group(1), m.group(2)
-                    link = f'<a:hlinkClick r:id="{_ID_LINK}"/>'
+                    # openpyxl chỉ khai báo namespace a/r cục bộ trên từng thẻ → phải tự khai báo ở đây
+                    link = f'<a:hlinkClick xmlns:a="{_NS_A}" xmlns:r="{_NS_R}" r:id="{_ID_LINK}"/>'
                     return f"<cNvPr{thuoc_tinh}>{link}</cNvPr>" if ket == "/>" else f"<cNvPr{thuoc_tinh}>{link}"
 
                 data = _RE_CNVPR.sub(them, x).encode("utf-8")
@@ -271,26 +300,29 @@ def ghi_meta(wb, lops):
 def dien_mau(mau_bytes, lops, ma_loai=None):
     """Điền các lớp vào file mẫu, trả về bytes của một file xlsx.
 
-    Vượt số sheet của mẫu thì tự thêm sheet + dòng Mục lục; thừa thì bỏ bớt.
-    ma_loai: mã loại hình (NVM → điền khóa nhân viên mới vào L11).
+    Vượt số sheet của mẫu thì tự thêm sheet + dòng Mục lục; thừa thì bỏ bớt. Sau các lớp có thêm
+    SO_SHEET_DU_PHONG sheet trống. ma_loai: mã loại hình (NVM → điền khóa nhân viên mới vào L11).
     """
     wb = openpyxl.load_workbook(io.BytesIO(mau_bytes))
     ten_sheet = _so_sheet_lop(wb)
     if not ten_sheet or TEN_MUC_LUC not in wb.sheetnames:
         raise ValueError("File mẫu không đúng cấu trúc (cần sheet 'Muc luc' và các sheet lớp '1', '2', …).")
     n = len(lops)
+    tong = n + SO_SHEET_DU_PHONG
     nguon = wb[ten_sheet[0]]
-    if n > len(ten_sheet):  # vượt số sheet của mẫu → nhân bản thêm từ sheet '1'
+    if tong > len(ten_sheet):  # vượt số sheet của mẫu → nhân bản thêm từ sheet '1'
         anh_nguon = _chup_anh(nguon)
-        for i in range(1, n + 1):
+        for i in range(1, tong + 1):
             if str(i) not in wb.sheetnames:
                 _nhan_ban_sheet(wb, nguon, anh_nguon, str(i))
     for ten in _so_sheet_lop(wb):
-        if int(ten) > n:
+        if int(ten) > tong:
             del wb[ten]
     for i, lop in enumerate(lops, 1):
         _dien_sheet_lop(wb[str(i)], lop, ma_loai)
-    lap_muc_luc(wb[TEN_MUC_LUC], n)
+    for i in range(n + 1, tong + 1):
+        _xoa_sheet_lop(wb[str(i)])
+    lap_muc_luc(wb[TEN_MUC_LUC], tong)
     ghi_meta(wb, lops)
     buf = io.BytesIO()
     wb.save(buf)
@@ -343,7 +375,9 @@ def tao_khung_co_ban(lops, ma_loai=None):
         ws_ml.cell(row=2, column=c, value=h)
     for w, col in zip((6, 65, 22, 18, 28), "ABCDE"):
         ws_ml.column_dimensions[col].width = w
-    for i, lop in enumerate(lops, 1):
+    tong = len(lops) + SO_SHEET_DU_PHONG
+    for i in range(1, tong + 1):
+        lop = lops[i - 1] if i <= len(lops) else None
         ws = wb.create_sheet(title=str(i))
         _ghi(ws, "B7", "- Môn/Khóa học:")
         _ghi(ws, "B9", "- Thời gian:")
@@ -351,17 +385,20 @@ def tao_khung_co_ban(lops, ma_loai=None):
         _ghi(ws, "B11", "- Giáo viên:")
         for c, h in enumerate(["STT", "Mã NV", "Họ tên", "Đơn vị", "Ghi chú"], 1):
             ws.cell(row=13, column=c, value=h).font = Font(name=FONT_TEN, size=FONT_CO, bold=True)
-        for r in range(14, 29):
+        for r in range(14, 14 + (15 if lop else SO_DONG_HV_DU_PHONG)):
             ws.cell(row=r, column=1, value=r - 13)
         for w, col in zip((6, 14, 28, 14, 15, 15), "ABCDEF"):
             ws.column_dimensions[col].width = w
-        _dien_sheet_lop(ws, lop, ma_loai, nua_phai=False)
+        if lop:
+            _dien_sheet_lop(ws, lop, ma_loai, nua_phai=False)
+        else:  # sheet dự phòng
+            _ghi(ws, "B8", NHAN_B8)
         ws["A1"] = f'=HYPERLINK("#\'{TEN_MUC_LUC}\'!A1", "Trở về Mục lục")'
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value is not None and cell.coordinate != "A1" and not cell.font.bold:
                     cell.font = Font(name=FONT_TEN, size=FONT_CO)
-    lap_muc_luc(ws_ml, len(lops), sao_chep_kieu=False)
+    lap_muc_luc(ws_ml, tong, sao_chep_kieu=False)
     ghi_meta(wb, lops)
     buf = io.BytesIO()
     wb.save(buf)
@@ -370,4 +407,4 @@ def tao_khung_co_ban(lops, ma_loai=None):
 
 def ten_file_an_toan(s):
     s = bo_dau(s)
-    return "".join(c if c.isalnum() or c in " -_()." else "-" for c in s).strip()
+    return "".join(c if c.isalnum() or c in " -_().+" else "-" for c in s).strip()

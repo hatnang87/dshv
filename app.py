@@ -380,9 +380,22 @@ with tab_tao_khung:
                 "Giáo viên": x["giao_vien"], "SL HV": x["so_hv"], "Dòng KHĐT": x["dong_goc"]} for x in lops]),
                 use_container_width=True, hide_index=True)
 
-        # ---------- BƯỚC 2: XUẤT (CHỈ MIỀN VỪA CHỌN, THÁNG CỦA KHĐT) ----------
+        # ---------- BƯỚC 2: XUẤT (CHỈ MIỀN VỪA CHỌN; THÁNG CỦA KHĐT, CÓ THỂ GỘP NHIỀU THÁNG) ----------
         st.divider()
-        st.subheader(f"Bước 2. Xuất danh sách lớp khung — {MIEN[m]} (tháng {thang_x:02d}/{nam_x})")
+        st.subheader(f"Bước 2. Xuất danh sách lớp khung — {MIEN[m]}")
+        conn_t = get_db_connection()
+        try:
+            thang_co = khdt_store.ds_thang(conn_t, m)
+        finally:
+            conn_t.close()
+        thang_mac_dinh = f"{nam_x:04d}-{thang_x:02d}"
+        if thang_mac_dinh not in thang_co:
+            thang_co = sorted(thang_co + [thang_mac_dinh])
+        thang_chon = st.multiselect("Tháng xuất — chọn nhiều tháng để gộp lớp các tháng vào cùng một file "
+                                    "(vd NVM tháng 10 + tháng 11)", thang_co, default=[thang_mac_dinh],
+                                    format_func=lambda s: f"T{s[5:]}/{s[:4]}", key=f"p2_thang_{m}_{thang_mac_dinh}")
+        cac_thang = sorted((int(s[:4]), int(s[5:])) for s in thang_chon)
+        nhan_t = khdt_core.nhan_thang(cac_thang) if cac_thang else ""
         muc_chon, xuat_vna, xuat_dt = None, True, True
         mau_keys = dict(LOAI_HINH)
         if m == "VNA_DT":
@@ -411,10 +424,11 @@ with tab_tao_khung:
             for k, ten in mau_keys.items():
                 st.file_uploader(f"Mẫu cho: {ten}", type=["xlsx"], key=f"mau_up_{k}")
 
-        if st.button("📄 Tạo danh sách lớp khung", type="primary", disabled=(xuat_vna and not muc_chon and not (m == "VNA_DT" and xuat_dt))):
+        if st.button("📄 Tạo danh sách lớp khung", type="primary",
+                     disabled=not cac_thang or (xuat_vna and not muc_chon and not (m == "VNA_DT" and xuat_dt))):
             conn_x = get_db_connection()
             try:
-                lops_m = khdt_store.doc_lop(conn_x, m, nam_x, thang_x, None, che_do)
+                lops_m = khdt_store.doc_lop_nhieu_thang(conn_x, m, cac_thang, None, che_do)
             finally:
                 conn_x.close()
             cac_file = khdt_core.chia_file_xuat(lops_m, m, muc_chon, xuat_vna, xuat_dt)
@@ -437,14 +451,15 @@ with tab_tao_khung:
                         st.error(f"❌ {ten_muc(v['k'])} {v['hau_to']}: {v['ket_qua']}")
                         continue
                     if v["k"] == "DOI_TAC":
-                        ten_f = f"DS lop hoc DOI TAC {v['hau_to']} T{thang_x:02d}-{nam_x}"
+                        ten_f = f"DS lop hoc DOI TAC {v['hau_to']} {nhan_t}"
                     else:
                         hau_to = f" {v['hau_to']}" if v["hau_to"] else ""
-                        ten_f = f"DS lop hoc {MIEN_FILE[m]} {LOAI_HINH_FILE[v['k']]}{hau_to} T{thang_x:02d}-{nam_x}"
+                        ten_f = f"DS lop hoc {MIEN_FILE[m]} {LOAI_HINH_FILE[v['k']]}{hau_to} {nhan_t}"
                     dau_ra.append(dict(mien=m, loai=v["k"], hau_to=v["hau_to"], ten=khdt_export.ten_file_an_toan(ten_f) + ".xlsx",
                                        data=v["ket_qua"], so_lop=len(v["lops"]), nguon=v["nguon"]))
             bo_qua = [ten_muc(k) for k in (muc_chon or []) if not any(f["loai"] == k for f in cac_file)]
-            st.session_state["khung_out"] = dict(files=dau_ra, bo_qua=bo_qua, thang=thang_x, nam=nam_x)
+            st.session_state["khung_out"] = dict(files=dau_ra, bo_qua=bo_qua, thang=cac_thang[0][1], nam=cac_thang[0][0],
+                                                 nhan=nhan_t)
 
         out = st.session_state.get("khung_out")
         if out:
@@ -454,6 +469,8 @@ with tab_tao_khung:
                 st.warning("Không có file nào được tạo.")
             else:
                 st.success(f"🎉 Đã tạo {len(out['files'])} file.")
+                st.caption(f"Mỗi file có thêm {khdt_export.SO_SHEET_DU_PHONG} sheet trống dự phòng "
+                           f"({khdt_export.SO_DONG_HV_DU_PHONG} dòng học viên) sau các sheet lớp, đã có dòng trong Mục lục.")
                 st.dataframe(pd.DataFrame([{"Mục": ten_muc(f["loai"]), "Khóa / Đối tác": f["hau_to"], "Số lớp (sheet)": f["so_lop"],
                                             "File": f["ten"], "Mẫu": f["nguon"]} for f in out["files"]]),
                              use_container_width=True, hide_index=True)
@@ -463,7 +480,7 @@ with tab_tao_khung:
                         for f in out["files"]:
                             zf.writestr(f["ten"], f["data"])
                     st.download_button("📦 Tải tất cả (ZIP)", zbuf.getvalue(),
-                                       file_name=f"DS_lop_khung_{MIEN_FILE[m]}_T{out['thang']:02d}-{out['nam']}.zip",
+                                       file_name=f"DS_lop_khung_{MIEN_FILE[m]}_{out.get('nhan') or nhan_t}.zip",
                                        mime="application/zip", type="primary")
                 for i, f in enumerate(out["files"]):
                     nhan_f = ten_muc(f["loai"]) + (f" {f['hau_to']}" if f["hau_to"] else "")
@@ -481,7 +498,7 @@ with tab_nhoi_hv:
     nguon_tab2 = []
     if out_t2 and out_t2.get("files"):
         ten_t2 = [f["ten"] for f in out_t2["files"]]
-        chon_t2 = st.multiselect(f"📄 File khung từ Tab 2 (T{out_t2['thang']:02d}/{out_t2['nam']}) — {len(ten_t2)} file",
+        chon_t2 = st.multiselect(f"📄 File khung từ Tab 2 ({out_t2.get('nhan') or khdt_core.nhan_thang([(out_t2['nam'], out_t2['thang'])])}) — {len(ten_t2)} file",
                                  ten_t2, default=ten_t2, key="nhoi_chon_t2")
         nguon_tab2 = [(f["ten"], f["data"]) for f in out_t2["files"] if f["ten"] in chon_t2]
     else:

@@ -581,5 +581,15 @@ def sap_xep(lops, che_do):
         return sorted(lops, key=lambda x: (x["tu_ngay"], x["den_ngay"],
                                            THU_TU_MIEN.get(x["mien"], 99),
                                            THU_TU_LOAI.get(x["loai_hinh"], 99), x["thu_tu_goc"]))
-    # theo KHĐT: đúng thứ tự dòng trong KHĐT; lớp kéo dài từ KHĐT tháng trước xếp sau cùng
-    return sorted(lops, key=lambda x: (bool(x.get("keo_dai")), THU_TU_MIEN.get(x["mien"], 99), x["thu_tu_goc"]))
+    # theo KHĐT: đúng thứ tự dòng trong KHĐT (gộp nhiều tháng: hết KHĐT tháng trước mới đến tháng sau);
+    # lớp kéo dài từ KHĐT tháng trước xếp sau cùng
+    return sorted(lops, key=lambda x: (bool(x.get("keo_dai")), x.get("k_nam") or 0, x.get("k_thang") or 0,
+                                       THU_TU_MIEN.get(x["mien"], 99), x["thu_tu_goc"]))
+
+
+def nhan_thang(cac_thang):
+    """list (nam, thang) → 'T10-2026', 'T10+11-2026', khác năm 'T12-2026+T01-2027' (tên file / tiêu đề)."""
+    theo_nam = {}
+    for nam, thang in sorted(set(cac_thang)):
+        theo_nam.setdefault(nam, []).append(thang)
+    return "+".join(f"T{'+'.join(f'{t:02d}' for t in ts)}-{nam}" for nam, ts in theo_nam.items())

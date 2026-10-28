@@ -45,6 +45,11 @@ Tài liệu mô tả hiện trạng, lỗi cần sửa, đề xuất cải tiế
 - **Giãn bảng khi nhiều HV hơn số dòng mẫu** (mẫu NVM 5 dòng, phục hồi/đối tác 16, còn lại 20; trước đây HV thứ 6/17/21 trở đi ghi đè khối chữ ký "P.Trưởng Trung tâm/Người lập"): `_mo_rong_bang` dời khối chân trang xuống, nhân style + công thức STT/nửa phải, nâng `COUNTIF($L$14:$L…)` ở K11; logo giữ link về Mục lục (`gan_link_logo` chạy lại sau khi lưu).
 - Kiểm thử trên `DS HV T10 - 06.10` (115 lớp, 1130 HV, 1 lớp HỦY) + khung T10 NBA (214 lớp, 11 file): 184 sheet điền chắc + 4 "gần đúng" (Nâng tầm "Lớp 3"/"Lớp 1" so với DSHV không đánh số lớp), 1 lớp HỦY, 25 không có trong DSHV (hãng KHAC, TTSC, Cân bằng trọng tải…), 0 hòa; chỉ 2 lớp DSHV chưa có khung (Đặt/thu chèn chóp, Cảnh giới đầu cánh). Không có `_khop`: 163 điền, 44 không có.
 
+**Cập nhật 28/10/2026 — sheet dự phòng + gộp nhiều tháng (Tab 2):**
+- Mọi file khung (điền mẫu và file nhanh) có thêm `SO_SHEET_DU_PHONG` = 10 sheet trống `N+1..N+10` sau các sheet lớp (`khdt_export._xoa_sheet_lop`: bỏ dữ liệu cũ của sheet mẫu ở D7/D9/D10/D11/L11, B8 chỉ còn nhãn, bảng HV trống giãn đủ 30 dòng bằng `khdt_hv._mo_rong_bang`), Mục lục có sẵn dòng + hyperlink. Công thức Mục lục đổi thành `=IF('n'!$D$7="","",'n'!$D$7)` để sheet trống không hiện 0. Không ghi `_khop` cho sheet dự phòng; Tab 3 bỏ qua sheet có D7 trống.
+- Bước 2 có ô **Tháng xuất** (chọn nhiều tháng, từ `khdt_store.ds_thang`) → `doc_lop_nhieu_thang` gộp lớp các tháng, mỗi lớp một lần (bản ghi lại cùng tên + ngày ở KHĐT khác bị bỏ; trong cùng KHĐT vẫn giữ), theo KHĐT thì hết KHĐT tháng trước mới đến tháng sau. Tên file `… T10+11-2026.xlsx` (`khdt_core.nhan_thang`). Một tháng cho kết quả y như trước.
+- Sửa kèm: (1) `gan_link_logo` chèn `<a:hlinkClick r:id>` thiếu khai báo namespace `a`/`r` (openpyxl khai báo cục bộ) → file khung là XML lỗi, openpyxl không đọc lại được; (2) `_nhan_ban_sheet`: `copy_worksheet` không đổi ô trong vùng gộp thành `MergedCell` → trên sheet nhân bản `tim_bang_hoc_vien` nhận dòng 13 là dòng đầu bảng (Tab 3 ghi HV đè dòng tiêu đề).
+
 **Cần xác nhận:** file mẫu mặc định cho "Ban đầu – NVM" đang là `DS lOP HOC MAU (TỪ - T-2026)` (đoán; sửa trong mau_ds_lop.json hoặc tải mẫu ngay trên giao diện); lớp dạng `3.1` Lý thuyết / `3.2` Thực hành của đối tác đang thành 2 lớp riêng.
 
 ## 1. Tổng quan

@@ -90,3 +90,31 @@ def doc_lop(conn, mien, nam, thang, ma_loai=None, che_do="khdt"):
     if ma_loai:
         lops = [x for x in lops if x["loai_hinh"] in ma_loai]
     return sap_xep(lops, che_do)
+
+
+def ds_thang(conn, mien):
+    """Các tháng 'YYYY-MM' (tăng dần) có lớp của miền — gồm cả tháng sau mà lớp của KHĐT trước chạm tới."""
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT t.thang FROM lop_thang t JOIN lop_hoc l ON l.id = t.lop_id WHERE l.mien = ? ORDER BY t.thang",
+        (mien,))]
+
+
+def doc_lop_nhieu_thang(conn, mien, cac_thang, ma_loai=None, che_do="khdt"):
+    """Các lớp của miền trong nhiều tháng (list (nam, thang)) gộp lại, mỗi lớp một lần.
+
+    Lớp kéo dài qua các tháng đã chọn, hoặc có ở cả KHĐT tháng này lẫn tháng sau, chỉ lấy một lần;
+    chỉ lớp của KHĐT ngoài các tháng đã chọn mới tính là kéo dài (xếp cuối khi theo thứ tự KHĐT).
+    """
+    chon = sorted(set(cac_thang))
+    lops, da_co_id, khdt_cua = [], set(), {}
+    for nam, thang in chon:
+        for d in doc_lop(conn, mien, nam, thang, ma_loai, che_do):
+            # cùng tên + ngày trong CÙNG một KHĐT vẫn là các lớp khác nhau; chỉ bỏ bản ghi lại ở KHĐT khác
+            khoa = (d["ten_lop"], d["tu_ngay"], d["den_ngay"])
+            if d["id"] in da_co_id or khdt_cua.get(khoa, d["khdt_id"]) != d["khdt_id"]:
+                continue
+            da_co_id.add(d["id"])
+            khdt_cua[khoa] = d["khdt_id"]
+            d["keo_dai"] = (d["k_nam"], d["k_thang"]) not in chon
+            lops.append(d)
+    return sap_xep(lops, che_do)
