@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i \"s/f.split\\('\\\\\\\\\\\\\\\\'\\)\\\\[-1\\\\]/f[-30:]/\" insp3.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python insp3.py)",
+      "Bash(python -)",
+      "Bash(PYTHONIOENCODING=utf-8 python t1.py)",
+      "Bash(python -m py_compile app.py)",
+      "Bash(python -m streamlit --version)",
+      "Bash(python -m pip --version)"
+    ]
+  }
+}

@@ -415,7 +415,7 @@ with tab_tao_khung:
             "Kiểu file xuất",
             ["Điền vào file mẫu (đủ logo/định dạng, mỗi file vài giây)",
              "File nhanh: chỉ có dữ liệu, đúng vị trí ô như mẫu (tự copy vào file mẫu)"],
-            index=1 if khdt_export.TREN_CLOUD else 0,  # máy chủ cloud ít RAM/CPU → mặc định file nhanh
+            index=0,  # mặc định: file danh sách lớp học khung chuẩn (điền vào file mẫu)
             horizontal=False)
         xuat_nhanh = kieu_xuat.startswith("File nhanh")
 
@@ -544,6 +544,7 @@ with tab_nhoi_hv:
                     except Exception as e:
                         loi.append((ten, str(e)))
                 tien_do.empty()
+                khdt_hv.gan_dung_chung(thong_ke)
                 chua_dung = khdt_hv.lop_dshv_chua_dung(ds_dshv, thong_ke)
                 st.session_state["nhoi_out"] = dict(
                     files=files_ra, thong_ke=thong_ke, loi=loi, chu_ky=chu_ky,
@@ -576,7 +577,8 @@ with tab_nhoi_hv:
                              use_container_width=True, hide_index=True)
         loc_tt = st.multiselect("Lọc theo trạng thái", sorted(dem), default=sorted(dem), key="nhoi_loc_tt")
         st.dataframe(pd.DataFrame([{"File": t["file"], "Sheet": t["sheet"], "Tên lớp": t["ten_lop"], "Trạng thái": t["trang_thai"],
-                                    "Số HV": t["so_hv"], "Lớp DSHV khớp": t["lop_dshv"], "Điểm": t["diem"], "Lý do": t["ly_do"]}
+                                    "Số HV": t["so_hv"], "Lớp DSHV khớp": t["lop_dshv"], "Dùng chung DSHV với": t.get("dung_chung", ""),
+                                    "Điểm": t["diem"], "Lý do": t["ly_do"]}
                                    for t in tk_hv if t["trang_thai"] in loc_tt]),
                      use_container_width=True, hide_index=True)
         if any(not t["co_meta"] for t in tk_hv):

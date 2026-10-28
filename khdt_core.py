@@ -262,6 +262,50 @@ def nhan_loai_hien_thi(loai_cot, ma_loai):
     return nhan
 
 
+# ---------------------------------------------------------------- giáo viên
+_VAI_TRO = r"(?:DG|GT|GPC|TG|TTG)"  # dự giảng / giám thị / giảng phê chuẩn / trợ giảng
+_RE_VAI_TRO = re.compile(rf"(?<!\w){_VAI_TRO}(?!\w)")
+_RE_NHAN_CHAM = re.compile(
+    rf"(?<!\w)(?:{_VAI_TRO}(?:\s*[/+\-]\s*{_VAI_TRO})*|dự giảng|giảng phê chuẩn|trợ giảng)\s*:", re.IGNORECASE)
+_RE_CUM_VAI_TRO = re.compile(r"trợ giảng|dự giảng|giảng phê chuẩn", re.IGNORECASE)
+_RE_DON_VI_CUOI = re.compile(r"(?:\s+(?:ASOC|TTĐT|CNVN|VNBA|VTSN|VIAGS|VINACS|AGS|TSN|DAD|NBA|SGN|CXR))+$")
+
+
+def _ten_gv_chinh(dong):
+    """Tên GV chính trong một dòng của ô Giáo viên; [] nếu là GV phụ (DG/GT/GPC/TG/TTG/trợ giảng…) hoặc rỗng."""
+    if _RE_VAI_TRO.search(dong) or _RE_CUM_VAI_TRO.search(dong):
+        return []
+    dong = re.sub(r"\([^)]*\)?", " ", dong)             # ghi chú trong ngoặc: ngày, ĐGGV…
+    dong = re.sub(r"(?<!\w)ĐGGV(?!\w)", " ", dong)
+    dong = re.split(r"\s*[-–]\s*", dong, maxsplit=1)[0]   # '- TTĐT NBA', '-Gv AGS', '- VINACS'
+    ten = []
+    for phan in dong.split("/"):
+        phan = _RE_DON_VI_CUOI.sub("", " ".join(phan.split()))
+        if phan:
+            ten.append(phan)
+    return ten
+
+
+def tach_giao_vien(o):
+    """Danh sách GV chính từ ô 'Giáo viên' GỐC (mỗi người một dòng trong ô, chưa qua lam_sach).
+
+    Bỏ GV phụ ghi chú DG / GT / GPC / TG / TTG / trợ giảng (cuối dòng, trong ngoặc, hoặc sau nhãn 'GPC:', 'DG/GT/GPC :',
+    'Dự giảng:'… — từ nhãn trở đi bỏ hết); bỏ ghi chú đơn vị / ngày / ĐGGV nhưng giữ tên.
+    """
+    if o is None or (isinstance(o, float) and o != o):
+        return []
+    text = unicodedata.normalize("NFC", str(o)).replace("\xa0", " ")
+    ket_qua = []
+    for dong in re.split(r"[\n\r;,]+", text):
+        m = _RE_NHAN_CHAM.search(dong)
+        for ten in _ten_gv_chinh(dong[:m.start()] if m else dong):
+            if ten not in ket_qua:
+                ket_qua.append(ten)
+        if m:
+            break
+    return ket_qua
+
+
 # ---------------------------------------------------------------- đọc sheet
 _RE_LA_MA = re.compile(r"[IVX]+")
 _RE_LA_MA_CHAM = re.compile(r"[IVX]+\.\d+")
@@ -341,24 +385,58 @@ def _la_ly_thuyet_thuc_hanh(ten):
     return bool(re.match(r"\s*(ly thuyet|thuc hanh)", bo_dau(ten).lower()))
 
 
-# Chỉ các mục có tên bắt đầu như sau (bổ sung năng định) mới gộp Lý thuyết + Thực hành thành 1 lớp, tránh gộp nhầm
+# Chỉ các mục BSNĐ có tên bắt đầu như sau mới gộp Lý thuyết + Thực hành thành 1 lớp, tránh gộp nhầm
+# (định kỳ, phục hồi, BDKT: gộp mọi môn thuần Lý thuyết + Thực hành — xem _duoc_gop)
 TIEN_TO_MUC_GOP = ("dieu khien xe", "van hanh thiet bi", "nghiep vu ve sinh")
 
-_RE_TIEU_DE_MUC =re.compile(r"(?:[A-Z]\.\d+(?:\.\d+)?|[IVX]+(?:\.\d+)?|[A-Z])")
+
+def _ten_sach(ten):
+    """Tên không dấu, chữ thường, bỏ tiền tố '- ' (vd '- Nhóm 1' -> 'nhom 1')."""
+    return re.sub(r"^[\s\-–]+", "", bo_dau(ten).lower())
 
 
-def _ten_lop_trong_muc(recs, idx):
-    """Tên các dòng lớp cấp 1 (stt '1', '2'…) nằm dưới mục La Mã ở recs[idx]; None nếu có dòng con kiểu '1.1'."""
-    ten = []
+def _la_dong_lt_th_kt(ten):
+    """Dòng của môn thuần Lý thuyết / Thực hành: 'Lý thuyết…', 'Thực hành…', 'Kiểm tra…', 'Nhóm n'."""
+    return _ten_sach(ten).startswith(("ly thuyet", "thuc hanh", "kiem tra", "nhom"))
+
+
+def _duoc_gop(ma_loai, ten_mon):
+    if ma_loai in ("DINH_KY", "PHUC_HOI", "BDKT"):
+        return True
+    return ma_loai == "BSND" and _ten_sach(ten_mon).startswith(TIEN_TO_MUC_GOP)
+
+
+def _la_ranh_gioi(stt):
+    """STT mở đầu một môn / mục / khu vực mới (kết thúc môn đang gộp)."""
+    return any(p.fullmatch(stt) for p in (_RE_LA_MA, _RE_LA_MA_CHAM, _RE_MUC2, _RE_MUC1, _RE_KHU_VUC))
+
+
+def _mon_thuan_lt_th(recs, idx):
+    """Các dòng của môn La Mã ở recs[idx] nếu môn chỉ gồm Lý thuyết / Thực hành / Kiểm tra / Nhóm; không thì None."""
+    dong = []
     for rec in recs[idx + 1:]:
-        stt = rec["stt"]
-        if _RE_TIEU_DE_MUC.fullmatch(stt):
-            break  # sang mục / mục con / khu vực khác
-        if re.fullmatch(r"\d+", stt):
-            ten.append(rec["ten"])
-        elif re.fullmatch(r"\d+\.\d+(\.\d+)?", stt):
-            return None
-    return ten
+        if _la_ranh_gioi(rec["stt"]):
+            break
+        dong.append(rec)
+    if not dong or not all(_la_dong_lt_th_kt(d["ten"]) for d in dong):
+        return None
+    # chỉ gộp khi có CẢ Lý thuyết lẫn Thực hành (môn chỉ có Thực hành giữ tên 'Thực hành + kiểm tra/<môn>')
+    if not (any(_ten_sach(d["ten"]).startswith("ly thuyet") for d in dong)
+            and any(_ten_sach(d["ten"]).startswith("thuc hanh") for d in dong)):
+        return None
+    return dong
+
+
+def _mon_chi_thuc_hanh(recs, idx):
+    """Các dòng con (không STT hoặc '-') của môn La Mã ở recs[idx] nếu tất cả đều là 'Thực hành…'; không thì None."""
+    dong = []
+    for rec in recs[idx + 1:]:
+        if _la_ranh_gioi(rec["stt"]):
+            break
+        dong.append(rec)
+    if not dong or not all(d["stt"] in ("", "-") and _ten_sach(d["ten"]).startswith("thuc hanh") for d in dong):
+        return None
+    return dong
 
 
 def doc_khdt_sheet(rows, mien, thang, nam):
@@ -414,7 +492,7 @@ def doc_khdt_sheet(rows, mien, thang, nam):
             ten_lop = f"{lop['ten_goc']}/{lop['parent']}"
         elif lop["dotted"] and roman:
             ten_lop = f"{lop['ten_goc']}/{roman}"
-        elif ma_loai in ("NVM", "BSND") and roman and "tờ trình" not in roman.lower():
+        elif (ma_loai in ("NVM", "BSND") or (ma_loai == "BDKT" and any("chuyen mon nghiep vu" in bo_dau(h).lower() for h in lop["heads"])))                 and roman and "tờ trình" not in roman.lower():
             ten_lop = f"{lop['ten_goc']}/{roman}"
         else:
             ten_lop = lop["ten_goc"]
@@ -444,9 +522,10 @@ def doc_khdt_sheet(rows, mien, thang, nam):
             if cell not in (None, "") and not ngay:
                 canh_bao.append(f"Dòng {lop['dong_cuoi']}: không đọc được ngày '{lam_sach(cell)}'.")
         for key, c in (("gv", cot["gv"]), ("dd", cot["dd"]), ("gc", cot["gc"])):
-            t = lam_sach(_o(r, c))
-            if t and t not in lop[key]:
-                lop[key].append(t)
+            moi = tach_giao_vien(_o(r, c)) if key == "gv" else [lam_sach(_o(r, c))]
+            for t in moi:
+                if t and t not in lop[key]:
+                    lop[key].append(t)
         el = lam_sach(_o(r, cot["el"]))
         if el and el not in ("0", "0.0"):
             lop["el"] = True
@@ -462,30 +541,39 @@ def doc_khdt_sheet(rows, mien, thang, nam):
 
     for idx, rec in enumerate(recs):
         stt, ten, r = rec["stt"], rec["ten"], rec["r"]
+        if cur is not None and cur.get("gop_het") and not _la_ranh_gioi(stt):
+            # môn thuần Lý thuyết + Thực hành: mọi dòng (kể cả Kiểm tra, Nhóm) cộng vào cùng một lớp
+            cur["dong_cuoi"] = rec["dong"]
+            cong_du_lieu(cur, r, _ten_sach(ten).startswith("nhom"))
+            continue
         if _RE_LA_MA_CHAM.fullmatch(stt):  # I.1, II.2
             ket_thuc_lop()
             heads = heads[:3] + [ten]
         elif _RE_LA_MA.fullmatch(stt) and any(lam_sach(_o(r, cot[k])) for k in ("loai", "tu", "den")):
             # số La Mã nhưng mang dữ liệu lớp (vd 'III Điều khiển xe… - Thực hành thực tế' + các Nhóm)
             ket_thuc_lop()
+            roman, parents = ten, {}
+            heads = heads[:2] + [ten]
             cur = moi_lop(stt, ten, rec["dong"], "", False)
+            cur["roman"] = ""  # tên lớp là chính môn này, không ghép tên môn La Mã đứng trước
             cong_du_lieu(cur, r, False)
+            con = _mon_chi_thuc_hanh(recs, idx)
+            if con and xac_dinh_loai(heads, cur["loai_cot"]) == "BDKT":
+                # môn BDKT chỉ có các dòng Thực hành (+ kiểm tra, nhóm) → 'Thực hành + kiểm tra/<môn>'
+                cur["parent"] = ten
+                cur["ten_goc"] = "Thực hành + kiểm tra" if any("kiem tra" in bo_dau(d["ten"]).lower() for d in con) else "Thực hành"
         elif _RE_LA_MA.fullmatch(stt):  # I, II (môn / nghiệp vụ)
             ket_thuc_lop()
             roman, parents = ten, {}
             heads = heads[:2] + [ten]
-            lop_con = _ten_lop_trong_muc(recs, idx)
-            if lop_con and all(_la_ly_thuyet_thuc_hanh(t) for t in lop_con) \
-                    and any(bo_dau(t).lower().lstrip().startswith("ly thuyet") for t in lop_con) \
-                    and any(bo_dau(t).lower().lstrip().startswith("thuc hanh") for t in lop_con) \
-                    and xac_dinh_loai(heads, "") == "BSND" \
-                    and bo_dau(ten).lower().lstrip().startswith(TIEN_TO_MUC_GOP):
-                # bổ sung năng định: mục chỉ gồm 'Lý thuyết + kiểm tra' và 'Thực hành + kiểm tra'
-                # (vd 'Điều khiển xe đầu kéo') → 1 lớp mang tên mục, thông tin gộp từ lý thuyết + thực hành
-                cur = moi_lop(stt, ten, rec["dong"], "", False)
-                cur["gop"] = "muc"
-                cur["roman"] = ""  # tên lớp chính là tên mục, không ghép thêm
-                cong_du_lieu(cur, r, False)
+            mon = _mon_thuan_lt_th(recs, idx)
+            if mon:  # môn có cả Lý thuyết lẫn Thực hành (+ kiểm tra, nhóm) → 1 lớp, tên = tên môn
+                loai_cot = next((lam_sach(_o(d["r"], cot["loai"])) for d in mon if lam_sach(_o(d["r"], cot["loai"]))), "")
+                if _duoc_gop(xac_dinh_loai(heads, loai_cot), ten):
+                    cur = moi_lop(stt, ten, rec["dong"], "", False)
+                    cur["gop_het"] = True
+                    cur["roman"] = ""  # tên lớp chính là tên môn, không ghép thêm
+                    cong_du_lieu(cur, r, False)
         elif _RE_MUC2.fullmatch(stt):  # C.2.1
             ket_thuc_lop()
             roman, parents, muc2 = "", {}, ten
@@ -497,7 +585,7 @@ def doc_khdt_sheet(rows, mien, thang, nam):
             ket_thuc_lop()
             roman, parents, heads, khu_vuc, muc2 = "", {}, [], ten, ""
         elif _RE_LOP.fullmatch(stt):
-            if cur is not None and cur.get("gop") and (cur["gop"] == "muc" or stt.startswith(cur["stt"] + ".")):
+            if cur is not None and cur.get("gop") and stt.startswith(cur["stt"] + "."):
                 # dòng con Lý thuyết / Thực hành của lớp gộp: cộng dữ liệu vào cùng một lớp
                 cur["dong_cuoi"] = rec["dong"]
                 cong_du_lieu(cur, r, False)
@@ -509,7 +597,8 @@ def doc_khdt_sheet(rows, mien, thang, nam):
             # kể cả khi ô loại hình ('Ban đầu') của nó có dữ liệu
             if not co_ngay and ke_tiep.startswith(stt + "."):
                 con = _ten_con_truc_tiep(recs, idx, stt)
-                if con and all(_la_ly_thuyet_thuc_hanh(t) for t in con):
+                gop_kt = _duoc_gop(xac_dinh_loai(heads, ""), ten)
+                if con and all(_la_ly_thuyet_thuc_hanh(t) or (gop_kt and _ten_sach(t).startswith("kiem tra")) for t in con):
                     # khóa chỉ gồm các lớp nhỏ Lý thuyết / Thực hành → gộp thành 1 lớp (tên = tên khóa)
                     cur = moi_lop(stt, ten, rec["dong"], "", False)
                     cur["gop"] = True
