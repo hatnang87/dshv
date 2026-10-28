@@ -75,8 +75,11 @@ def lam_sach(v):
 
 
 # ---------------------------------------------------------------- chọn sheet theo miền
-def goi_y_sheet(ten_sheets, mien):
-    """Danh sách sheet gợi ý cho một miền (ưu tiên đứng trước)."""
+def goi_y_sheet(ten_sheets, mien, an=()):
+    """Danh sách sheet gợi ý cho một miền (ưu tiên đứng trước).
+
+    an: các sheet đang ẩn trong file (thường là bản nháp, vd 'C-Đào tạo tại NBA xác nhận') → xếp sau sheet hiển thị.
+    """
     ket_qua = []
     for ten in ten_sheets:
         k = bo_dau(ten).lower()
@@ -88,7 +91,7 @@ def goi_y_sheet(ten_sheets, mien):
             ket_qua.append(ten)  # bỏ qua bản "NBA rà"
         elif mien == "VNA_DT" and "vna" in k:
             ket_qua.append(ten)
-    return ket_qua
+    return sorted(ket_qua, key=lambda ten: ten in an)  # sort ổn định: giữ thứ tự trong file
 
 
 def doan_thang_nam(rows):
@@ -549,8 +552,12 @@ def doc_khdt_sheet(rows, mien, thang, nam):
         if _RE_LA_MA_CHAM.fullmatch(stt):  # I.1, II.2
             ket_thuc_lop()
             heads = heads[:3] + [ten]
-        elif _RE_LA_MA.fullmatch(stt) and any(lam_sach(_o(r, cot[k])) for k in ("loai", "tu", "den")):
-            # số La Mã nhưng mang dữ liệu lớp (vd 'III Điều khiển xe… - Thực hành thực tế' + các Nhóm)
+        elif _RE_LA_MA.fullmatch(stt) and (
+                any(lam_sach(_o(r, cot[k])) for k in ("tu", "den"))
+                or (lam_sach(_o(r, cot["loai"]))
+                    and not (idx + 1 < len(recs) and _RE_LOP.fullmatch(recs[idx + 1]["stt"])))):
+            # số La Mã nhưng mang dữ liệu lớp (vd 'III Điều khiển xe… - Thực hành thực tế' + các Nhóm);
+            # chỉ ghi loại hình, không ngày mà ngay sau là lớp đánh số (1 Lý thuyết…, 2 Thực hành…) thì là tiêu đề môn
             ket_thuc_lop()
             roman, parents = ten, {}
             heads = heads[:2] + [ten]
@@ -568,7 +575,8 @@ def doc_khdt_sheet(rows, mien, thang, nam):
             heads = heads[:2] + [ten]
             mon = _mon_thuan_lt_th(recs, idx)
             if mon:  # môn có cả Lý thuyết lẫn Thực hành (+ kiểm tra, nhóm) → 1 lớp, tên = tên môn
-                loai_cot = next((lam_sach(_o(d["r"], cot["loai"])) for d in mon if lam_sach(_o(d["r"], cot["loai"]))), "")
+                loai_cot = next((lam_sach(_o(d["r"], cot["loai"])) for d in mon if lam_sach(_o(d["r"], cot["loai"]))),
+                                lam_sach(_o(r, cot["loai"])))  # dòng con trống loại hình → lấy của dòng môn
                 if _duoc_gop(xac_dinh_loai(heads, loai_cot), ten):
                     cur = moi_lop(stt, ten, rec["dong"], "", False)
                     cur["gop_het"] = True
@@ -612,6 +620,13 @@ def doc_khdt_sheet(rows, mien, thang, nam):
                 cha = stt.rsplit(".", 1)[0]
                 parent = parents.get(cha, "")
             cur = moi_lop(stt, ten, rec["dong"], parent, dotted)
+            cong_du_lieu(cur, r, False)
+        elif not stt and lam_sach(_o(r, cot["loai"])) and not _la_dong_lt_th_kt(ten) \
+                and any(lam_sach(_o(r, cot[k])) for k in ("tu", "den")) and (cur is None or cur["ngay"]):
+            # lớp riêng chỉ thiếu STT: có loại hình + ngày của nó, lớp đứng trên đã đủ ngày (vd 'Manual check-in…' sau
+            # lớp 3 'Hệ thống làm thủ tục…'); lớp trên chưa có ngày ('6 Kiểm tra tốt nghiệp') thì vẫn là dòng con của nó
+            ket_thuc_lop()
+            cur = moi_lop("", ten, rec["dong"], "", False)
             cong_du_lieu(cur, r, False)
         elif stt == "-" or (not stt and (ten.lower().startswith("nhóm")
                                           or any(lam_sach(_o(r, cot[k])) for k in ("tu", "den")))):

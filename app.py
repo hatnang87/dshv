@@ -320,9 +320,13 @@ with tab_tao_khung:
                 with st.spinner("Đang đọc file KHĐT..."):
                     wb_k = openpyxl.load_workbook(io.BytesIO(du_lieu_khdt), data_only=True, read_only=True)
                     st.session_state["khdt_rows"] = {w.title: [list(r) for r in w.iter_rows(values_only=True)] for w in wb_k.worksheets}
+                    # sheet ẩn (vd 'C-Đào tạo tại NBA xác nhận') thường là bản nháp cũ → không gợi ý trước sheet hiển thị
+                    st.session_state["khdt_an"] = [w.title for w in wb_k.worksheets if w.sheet_state != "visible"]
                 st.session_state["khdt_khoa"] = khoa_file
                 st.session_state.pop("khdt_kq", None)
                 st.session_state.pop("khung_out", None)
+                for k in [k for k in st.session_state if str(k).startswith("p1_sheet_")]:  # file mới → chọn lại theo gợi ý
+                    del st.session_state[k]
             except Exception as e:
                 st.session_state.pop("khdt_khoa", None)
                 st.error(f"❌ Không đọc được file KHĐT (cần file .xlsx hợp lệ): {e}")
@@ -332,12 +336,17 @@ with tab_tao_khung:
     if rows_by_sheet:
         ten_sheets = list(rows_by_sheet)
         thang_goi_y, nam_goi_y = next(((t, n) for t, n in (khdt_core.doan_thang_nam(r) for r in rows_by_sheet.values()) if t), (None, None))
-        goi_y = khdt_core.goi_y_sheet(ten_sheets, mien_chon)
+        sheet_an = st.session_state.get("khdt_an", [])
+        goi_y = khdt_core.goi_y_sheet(ten_sheets, mien_chon, sheet_an)
         if not goi_y:
             st.warning(f"⚠️ Không tìm thấy sheet gợi ý cho {MIEN[mien_chon]} — hãy chọn đúng sheet bên dưới.")
         c_s, c_t, c_n = st.columns([3, 1, 1])
         sheet_chon = c_s.selectbox(f"Sheet dữ liệu của {MIEN[mien_chon]}", ten_sheets,
-                                   index=ten_sheets.index(goi_y[0]) if goi_y else 0, key=f"p1_sheet_{mien_chon}")
+                                   index=ten_sheets.index(goi_y[0]) if goi_y else 0, key=f"p1_sheet_{mien_chon}",
+                                   format_func=lambda s: f"{s} (sheet ẩn)" if s in sheet_an else s)
+        if sheet_chon in sheet_an:
+            st.warning(f"⚠️ Sheet '{sheet_chon}' đang **ẩn** trong file KHĐT (thường là bản nháp cũ) — kiểm tra lại, "
+                       "bản trình ký thường là sheet đang hiển thị.")
         thang_khdt = c_t.number_input("Tháng KHĐT", 1, 12, thang_goi_y or datetime.now().month)
         nam_khdt = c_n.number_input("Năm KHĐT", 2000, 2100, nam_goi_y or datetime.now().year)
 
