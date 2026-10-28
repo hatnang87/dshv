@@ -304,7 +304,8 @@ def doc_mau_theo_loai(ma_loai):
 
 
 with tab_tao_khung:
-    st.info("💡 Chọn MỘT miền → upload KHĐT → phân tích (tự lưu vào CSDL) → xuất danh sách lớp khung của miền đó theo tháng của KHĐT.")
+    st.info("💡 Chọn MỘT miền → upload KHĐT → phân tích (tự lưu vào CSDL) → xuất danh sách lớp khung của miền đó theo tháng của KHĐT. "
+            "Bước 2 (chọn loại hình, tháng, tạo file) hiện ra sau khi bấm **Phân tích và lưu KHĐT**.")
 
     # ---------- BƯỚC 1: CHỌN MIỀN + ĐỌC KHĐT (TỰ LƯU) ----------
     st.subheader("Bước 1. Chọn miền và đọc KHĐT")
@@ -360,6 +361,13 @@ with tab_tao_khung:
         m, thang_x, nam_x, lops = kq["mien"], kq["thang"], kq["nam"], kq["lops"]
         st.success(f"✅ Đã đọc và lưu KHĐT T{thang_x:02d}/{nam_x} — {MIEN[m]} (sheet '{kq['sheet']}'): {len(lops)} lớp "
                    "(KHĐT cùng tháng/năm/miền được ghi đè).")
+        theo_thang = {}
+        for x in lops:
+            if x.get("thang"):
+                theo_thang[x["thang"][0]] = theo_thang.get(x["thang"][0], 0) + 1
+        if len(theo_thang) > 1:
+            st.caption("Lớp theo tháng bắt đầu: " + " · ".join(f"T{t[5:]}/{t[:4]}: {n}" for t, n in sorted(theo_thang.items()))
+                       + f" → file khung của KHĐT T{thang_x:02d} lấy đủ tất cả các lớp này.")
         dem = {LOAI_HINH[k]: sum(1 for x in lops if x["loai_hinh"] == k) for k in LOAI_HINH}
         for c, (ten, n) in zip(st.columns(len(dem)), dem.items()):
             c.metric(ten, n)
@@ -391,8 +399,9 @@ with tab_tao_khung:
         thang_mac_dinh = f"{nam_x:04d}-{thang_x:02d}"
         if thang_mac_dinh not in thang_co:
             thang_co = sorted(thang_co + [thang_mac_dinh])
-        thang_chon = st.multiselect("Tháng xuất — chọn nhiều tháng để gộp lớp các tháng vào cùng một file "
-                                    "(vd NVM tháng 10 + tháng 11)", thang_co, default=[thang_mac_dinh],
+        thang_chon = st.multiselect("Tháng KHĐT xuất — mặc định KHĐT tháng này (đủ mọi lớp, kể cả lớp học ở tháng sau); "
+                                    "chọn thêm tháng để gộp KHĐT/lớp của tháng đó vào cùng file",
+                                    thang_co, default=[thang_mac_dinh],
                                     format_func=lambda s: f"T{s[5:]}/{s[:4]}", key=f"p2_thang_{m}_{thang_mac_dinh}")
         cac_thang = sorted((int(s[:4]), int(s[5:])) for s in thang_chon)
         nhan_t = khdt_core.nhan_thang(cac_thang) if cac_thang else ""

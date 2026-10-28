@@ -65,16 +65,17 @@ def ds_khdt(conn):
 def doc_lop(conn, mien, nam, thang, ma_loai=None, che_do="khdt"):
     """Các lớp của miền trong tháng (nam, thang).
 
-    Gồm lớp của KHĐT tháng đó + lớp kéo dài từ KHĐT tháng trước chạm sang tháng này
-    (lớp tính vào tháng bắt đầu và cả các tháng sau). Loại trùng khi KHĐT tháng này
-    đã ghi lại chính lớp đó.
+    Gồm MỌI lớp của KHĐT tháng đó (kể cả lớp học ở tháng sau, vd KHĐT T11 có lớp T12) + lớp kéo dài
+    từ KHĐT tháng trước chạm sang tháng này (lớp tính vào tháng bắt đầu và cả các tháng sau).
+    Loại trùng khi KHĐT tháng này đã ghi lại chính lớp đó.
     """
     key_thang = f"{nam:04d}-{thang:02d}"
     rows = conn.execute(
         "SELECT l.*, k.thang AS k_thang, k.nam AS k_nam FROM lop_hoc l "
         "JOIN khdt k ON k.id = l.khdt_id "
-        "WHERE l.mien = ? AND l.id IN (SELECT lop_id FROM lop_thang WHERE thang = ?)",
-        (mien, key_thang)).fetchall()
+        "WHERE l.mien = ? AND (l.id IN (SELECT lop_id FROM lop_thang WHERE thang = ?) "
+        "OR (k.nam = ? AND k.thang = ?))",
+        (mien, key_thang, nam, thang)).fetchall()
     lops, da_co = [], set()
     for r in rows:  # lớp thuộc chính KHĐT của tháng trước
         if (r["k_nam"], r["k_thang"]) == (nam, thang):
